@@ -83,6 +83,22 @@ type ProtocolError struct {
 	Message string
 }
 
+// OutputDecodeError reports that a structured final response could not be
+// decoded into the requested Go type.
+type OutputDecodeError struct {
+	Target string
+	Err    error
+}
+
+func (e *OutputDecodeError) Error() string {
+	return fmt.Sprintf("codex: decode final response into %s: %v", e.Target, e.Err)
+}
+
+// Unwrap returns the underlying JSON decoding error.
+func (e *OutputDecodeError) Unwrap() error {
+	return e.Err
+}
+
 func (e *ProtocolError) Error() string {
 	return "codex: invalid event sequence: " + e.Message
 }

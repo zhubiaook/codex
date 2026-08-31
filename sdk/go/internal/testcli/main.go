@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -70,9 +71,67 @@ func main() {
 			fail("environment %s must be absent", key)
 		}
 		emitTurn("thread-args", "configured")
+	case "structured", "structured-exit", "structured-cancel", "structured-early-break":
+		runStructured(os.Getenv("CODEX_FAKE_SCENARIO"))
 	default:
 		fmt.Fprintf(os.Stderr, "unknown scenario: %q", os.Getenv("CODEX_FAKE_SCENARIO"))
 		os.Exit(2)
+	}
+}
+
+func runStructured(scenario string) {
+	args := slices.Clone(os.Args[1:])
+	schemaIndex := slices.Index(args, "--output-schema")
+	if schemaIndex < 0 || schemaIndex+1 >= len(args) {
+		fail("missing --output-schema argument: %q", args)
+	}
+	schemaPath := args[schemaIndex+1]
+	schema, err := os.ReadFile(schemaPath)
+	if err != nil {
+		fail("read output schema: %v", err)
+	}
+	if string(schema) != os.Getenv("EXPECTED_SCHEMA") {
+		fail("output schema = %q, want %q", schema, os.Getenv("EXPECTED_SCHEMA"))
+	}
+	if info, err := os.Stat(schemaPath); err != nil {
+		fail("stat output schema: %v", err)
+	} else if info.Mode().Perm()&0o077 != 0 && os.PathSeparator != '\\' {
+		fail("output schema permissions = %o, want private", info.Mode().Perm())
+	}
+	if statePath := os.Getenv("CODEX_FAKE_STATE"); statePath != "" {
+		if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
+			fail("create schema state directory: %v", err)
+		}
+		if err := os.WriteFile(statePath, []byte(schemaPath), 0o600); err != nil {
+			fail("record schema path: %v", err)
+		}
+	}
+
+	var expectedImages []string
+	if err := json.Unmarshal([]byte(os.Getenv("EXPECTED_IMAGES")), &expectedImages); err != nil {
+		fail("decode EXPECTED_IMAGES: %v", err)
+	}
+	withoutSchema := append(slices.Clone(args[:schemaIndex]), args[schemaIndex+2:]...)
+	expected := []string{"exec", "--experimental-json"}
+	if resumeID := os.Getenv("EXPECTED_RESUME_ID"); resumeID != "" {
+		expected = append(expected, "resume", resumeID)
+	}
+	for _, image := range expectedImages {
+		expected = append(expected, "--image", image)
+	}
+	if !slices.Equal(withoutSchema, expected) {
+		fail("unexpected structured arguments: %q, want %q", withoutSchema, expected)
+	}
+
+	switch scenario {
+	case "structured":
+		emitTurn("thread-structured", os.Getenv("STRUCTURED_RESPONSE"))
+	case "structured-exit":
+		fmt.Fprint(os.Stderr, "structured failure")
+		os.Exit(7)
+	case "structured-cancel", "structured-early-break":
+		fmt.Println(`{"type":"thread.started","thread_id":"thread-structured"}`)
+		time.Sleep(30 * time.Second)
 	}
 }
 

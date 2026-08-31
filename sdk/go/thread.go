@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	stdjson "encoding/json"
 	"encoding/json/jsontext"
 	json "encoding/json/v2"
 	"errors"
 	"fmt"
 	"iter"
 	"os/exec"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -119,11 +121,28 @@ const (
 )
 
 // TurnOptions configures one Turn.
-type TurnOptions struct{}
+type TurnOptions struct {
+	// OutputSchema is a JSON Schema that constrains the agent's final response.
+	// It must be a valid top-level JSON object.
+	OutputSchema stdjson.RawMessage
+}
+
+// StructuredInput combines prompt text with local image paths.
+type StructuredInput struct {
+	// Text is written to the Codex CLI standard input.
+	Text string
+	// LocalImages contains image paths forwarded as repeated --image arguments.
+	LocalImages []string
+}
 
 // TurnInput is input accepted by Run and RunStreamed.
 type TurnInput interface {
-	~string
+	~string | StructuredInput
+}
+
+type normalizedTurnInput struct {
+	prompt string
+	images []string
 }
 
 // Thread is a persisted conversation with the Codex agent.
@@ -162,6 +181,47 @@ func (t *Thread) Run[I TurnInput](ctx context.Context, input I, options TurnOpti
 	return turn, nil
 }
 
+// StructuredTurn contains both the ordinary Turn and its decoded output.
+type StructuredTurn[T any] struct {
+	Turn   Turn
+	Output T
+}
+
+// RunJSON runs a Turn with schema-constrained output and decodes the final
+// response into T. The input type is inferred when callers specify T.
+func (t *Thread) RunJSON[T any, I TurnInput](
+	ctx context.Context,
+	input I,
+	schema stdjson.RawMessage,
+	options TurnOptions,
+) (StructuredTurn[T], error) {
+	if schema == nil {
+		return StructuredTurn[T]{}, &ValidationError{
+			Field: "output schema",
+			Err:   errors.New("must be a valid top-level JSON object"),
+		}
+	}
+	if options.OutputSchema != nil {
+		return StructuredTurn[T]{}, &ValidationError{
+			Field: "output schema",
+			Err:   errors.New("must be provided either as the RunJSON schema or TurnOptions.OutputSchema, not both"),
+		}
+	}
+	options.OutputSchema = bytes.Clone(schema)
+	turn, err := t.Run(ctx, input, options)
+	if err != nil {
+		return StructuredTurn[T]{}, err
+	}
+	var output T
+	if err := json.Unmarshal([]byte(turn.FinalResponse), &output, json.RejectUnknownMembers(true)); err != nil {
+		return StructuredTurn[T]{}, &OutputDecodeError{
+			Target: reflect.TypeFor[T]().String(),
+			Err:    err,
+		}
+	}
+	return StructuredTurn[T]{Turn: turn, Output: output}, nil
+}
+
 // RunStreamed provides input to the agent and lazily streams Thread Events.
 // The returned iterator is single-use. Iteration owns the CLI process and
 // synchronously cleans it up when the caller stops early.
@@ -170,7 +230,8 @@ func (t *Thread) RunStreamed[I TurnInput](
 	input I,
 	options TurnOptions,
 ) iter.Seq2[ThreadEvent, error] {
-	prompt := strings.Clone(string(input))
+	normalized := normalizeInput(input)
+	options.OutputSchema = bytes.Clone(options.OutputSchema)
 	var consumed atomic.Bool
 	return func(yield func(ThreadEvent, error) bool) {
 		if !consumed.CompareAndSwap(false, true) {
@@ -182,16 +243,23 @@ func (t *Thread) RunStreamed[I TurnInput](
 			return
 		}
 		defer t.active.Store(false)
-		t.execute(ctx, prompt, options, yield)
+		t.execute(ctx, normalized, options, yield)
 	}
 }
 
 func (t *Thread) execute(
 	ctx context.Context,
-	prompt string,
+	input normalizedTurnInput,
 	options TurnOptions,
 	yield func(ThreadEvent, error) bool,
 ) {
+	schemaPath, cleanupSchema, err := createOutputSchemaFile(options.OutputSchema)
+	if err != nil {
+		yield(nil, err)
+		return
+	}
+	defer cleanupSchema()
+
 	args := []string{"exec", "--experimental-json"}
 	for _, override := range t.client.configOverrides {
 		args = append(args, "--config", override)
@@ -219,6 +287,9 @@ func (t *Thread) execute(
 	if t.options.SkipGitRepoCheck {
 		args = append(args, "--skip-git-repo-check")
 	}
+	if schemaPath != "" {
+		args = append(args, "--output-schema", schemaPath)
+	}
 	if t.options.ModelReasoningEffort != "" {
 		args = append(args, "--config", `model_reasoning_effort="`+string(t.options.ModelReasoningEffort)+`"`)
 	}
@@ -237,9 +308,12 @@ func (t *Thread) execute(
 	if resumed {
 		args = append(args, "resume", threadID)
 	}
+	for _, image := range input.images {
+		args = append(args, "--image", image)
+	}
 	command := exec.CommandContext(ctx, t.client.executable, args...)
 	command.Env = t.client.environment
-	command.Stdin = bytes.NewBufferString(prompt)
+	command.Stdin = bytes.NewBufferString(input.prompt)
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		yield(nil, &ExecError{Path: t.client.executable, ExitCode: -1, Err: err})
@@ -310,6 +384,16 @@ func (t *Thread) execute(
 	if !completed {
 		yield(nil, &ProtocolError{Message: "process exited without turn.completed"})
 	}
+}
+
+func normalizeInput[I TurnInput](input I) normalizedTurnInput {
+	if structured, ok := any(input).(StructuredInput); ok {
+		return normalizedTurnInput{
+			prompt: strings.Clone(structured.Text),
+			images: slices.Clone(structured.LocalImages),
+		}
+	}
+	return normalizedTurnInput{prompt: strings.Clone(reflect.ValueOf(input).String())}
 }
 
 func snapshotThreadOptions(options ThreadOptions) ThreadOptions {

@@ -103,3 +103,48 @@ goroutine or enforce a deadline.
 
 A Thread permits one active Turn and returns `ErrTurnInProgress` for a
 concurrent attempt. Separate Threads from the same Client can run concurrently.
+
+## Images and structured output
+
+Use `StructuredInput` to send prompt text and local images in one Turn:
+
+```go
+turn, err := thread.Run(ctx, codex.StructuredInput{
+	Text:        "Compare these screenshots.",
+	LocalImages: []string{"./before.png", "./after.png"},
+}, codex.TurnOptions{})
+```
+
+Provide a JSON Schema through `TurnOptions` when the raw JSON response is useful:
+
+```go
+schema := json.RawMessage(`{
+  "type": "object",
+  "properties": {"summary": {"type": "string"}},
+  "required": ["summary"],
+  "additionalProperties": false
+}`)
+turn, err := thread.Run(ctx, "Summarize the repository.", codex.TurnOptions{
+	OutputSchema: schema,
+})
+fmt.Println(turn.FinalResponse)
+```
+
+`RunJSON` uses the same Turn pipeline and decodes the response into a Go type:
+
+```go
+type Summary struct {
+	Summary string `json:"summary"`
+}
+
+result, err := thread.RunJSON[Summary](
+	ctx,
+	"Summarize the repository.",
+	schema,
+	codex.TurnOptions{},
+)
+fmt.Println(result.Output.Summary)
+```
+
+Output schema files are private temporary files. The SDK removes them after
+success, failure, cancellation, or an early exit from a streaming loop.
