@@ -1,0 +1,3 @@
+# Use a range-over-function event stream
+
+`Thread.RunStreamed` will expose turn events as a fully lazy `iter.Seq2[ThreadEvent, error]` instead of channels or a scanner-style stream object. Calling the method only snapshots its value inputs; the first iteration validates the request, acquires the thread's single-flight guard, and starts the Codex CLI. This Go 1.27 API provides caller-driven backpressure without a mandatory background goroutine, lets an unconsumed iterator allocate no external resources, makes early loop termination synchronously stop the CLI and clean up temporary resources, and allows `Thread.Run` to consume the same event path used by streaming callers.
