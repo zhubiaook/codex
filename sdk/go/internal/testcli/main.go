@@ -2,6 +2,7 @@
 package main
 
 import (
+	json "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -61,9 +62,31 @@ func main() {
 		requireArgs("exec", "--experimental-json")
 		fmt.Println(`{"type":"thread.started","thread_id":"thread-cancel"}`)
 		time.Sleep(30 * time.Second)
+	case "args":
+		requireExpectedArgs()
+		requireEnvironment("CODEX_API_KEY", "EXPECTED_API_KEY")
+		requireEnvironment("CODEX_INTERNAL_ORIGINATOR_OVERRIDE", "EXPECTED_ORIGINATOR")
+		if key := os.Getenv("EXPECTED_ABSENT"); key != "" && os.Getenv(key) != "" {
+			fail("environment %s must be absent", key)
+		}
+		emitTurn("thread-args", "configured")
 	default:
 		fmt.Fprintf(os.Stderr, "unknown scenario: %q", os.Getenv("CODEX_FAKE_SCENARIO"))
 		os.Exit(2)
+	}
+}
+
+func requireExpectedArgs() {
+	var expected []string
+	if err := json.Unmarshal([]byte(os.Getenv("EXPECTED_ARGS")), &expected); err != nil {
+		fail("decode EXPECTED_ARGS: %v", err)
+	}
+	requireArgs(expected...)
+}
+
+func requireEnvironment(key string, expectationKey string) {
+	if got, want := os.Getenv(key), os.Getenv(expectationKey); got != want {
+		fail("environment %s = %q, want %q", key, got, want)
 	}
 }
 

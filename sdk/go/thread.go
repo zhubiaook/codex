@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"iter"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,10 +24,99 @@ const (
 
 // ThreadOptions configures a Thread.
 type ThreadOptions struct {
+	// Model selects the model used by this Thread.
+	Model string
 	// ThreadSource classifies a newly created Thread. It is not sent when a
 	// Thread is resumed.
 	ThreadSource string
+	// SandboxMode controls filesystem and process isolation.
+	SandboxMode SandboxMode
+	// WorkingDirectory sets the Codex CLI working directory.
+	WorkingDirectory string
+	// AdditionalDirectories grants access to additional working directories.
+	AdditionalDirectories []string
+	// SkipGitRepoCheck allows the working directory to be outside a Git repository.
+	SkipGitRepoCheck bool
+	// ModelReasoningEffort selects the model reasoning effort.
+	ModelReasoningEffort ModelReasoningEffort
+	// NetworkAccess controls network access in the workspace-write sandbox.
+	NetworkAccess NetworkAccessMode
+	// WebSearchMode controls web search behavior.
+	WebSearchMode WebSearchMode
+	// ApprovalPolicy controls when Codex requests approval.
+	ApprovalPolicy ApprovalPolicy
 }
+
+// SandboxMode identifies a Codex sandbox policy.
+type SandboxMode string
+
+const (
+	// SandboxReadOnly allows reads but prevents workspace writes.
+	SandboxReadOnly SandboxMode = "read-only"
+	// SandboxWorkspaceWrite allows writes within approved workspace roots.
+	SandboxWorkspaceWrite SandboxMode = "workspace-write"
+	// SandboxDangerFullAccess disables sandbox restrictions.
+	SandboxDangerFullAccess SandboxMode = "danger-full-access"
+)
+
+// ModelReasoningEffort identifies a supported model reasoning effort.
+type ModelReasoningEffort string
+
+const (
+	// ReasoningEffortMinimal requests minimal reasoning.
+	ReasoningEffortMinimal ModelReasoningEffort = "minimal"
+	// ReasoningEffortLow requests low reasoning.
+	ReasoningEffortLow ModelReasoningEffort = "low"
+	// ReasoningEffortMedium requests medium reasoning.
+	ReasoningEffortMedium ModelReasoningEffort = "medium"
+	// ReasoningEffortHigh requests high reasoning.
+	ReasoningEffortHigh ModelReasoningEffort = "high"
+	// ReasoningEffortXHigh requests extra-high reasoning.
+	ReasoningEffortXHigh ModelReasoningEffort = "xhigh"
+	// ReasoningEffortMax requests maximum reasoning.
+	ReasoningEffortMax ModelReasoningEffort = "max"
+	// ReasoningEffortUltra requests ultra reasoning.
+	ReasoningEffortUltra ModelReasoningEffort = "ultra"
+	// ReasoningEffortPersistent requests persistent reasoning.
+	ReasoningEffortPersistent ModelReasoningEffort = "persistent"
+)
+
+// NetworkAccessMode controls workspace network access. Its zero value inherits
+// the Codex configuration.
+type NetworkAccessMode string
+
+const (
+	// NetworkAccessEnabled enables workspace network access.
+	NetworkAccessEnabled NetworkAccessMode = "enabled"
+	// NetworkAccessDisabled disables workspace network access.
+	NetworkAccessDisabled NetworkAccessMode = "disabled"
+)
+
+// WebSearchMode controls web search. Its zero value inherits Codex configuration.
+type WebSearchMode string
+
+const (
+	// WebSearchDisabled disables web search.
+	WebSearchDisabled WebSearchMode = "disabled"
+	// WebSearchCached allows cached web search results.
+	WebSearchCached WebSearchMode = "cached"
+	// WebSearchLive allows live web searches.
+	WebSearchLive WebSearchMode = "live"
+)
+
+// ApprovalPolicy controls when Codex asks for approval.
+type ApprovalPolicy string
+
+const (
+	// ApprovalNever never requests approval.
+	ApprovalNever ApprovalPolicy = "never"
+	// ApprovalOnRequest requests approval when the agent decides it is needed.
+	ApprovalOnRequest ApprovalPolicy = "on-request"
+	// ApprovalOnFailure requests approval after a sandboxed command fails.
+	ApprovalOnFailure ApprovalPolicy = "on-failure"
+	// ApprovalUntrusted requests approval for untrusted commands.
+	ApprovalUntrusted ApprovalPolicy = "untrusted"
+)
 
 // TurnOptions configures one Turn.
 type TurnOptions struct{}
@@ -103,9 +193,46 @@ func (t *Thread) execute(
 	yield func(ThreadEvent, error) bool,
 ) {
 	args := []string{"exec", "--experimental-json"}
+	for _, override := range t.client.configOverrides {
+		args = append(args, "--config", override)
+	}
+	if t.client.baseURL != "" {
+		value, _ := renderTOMLValue(t.client.baseURL, "openai_base_url")
+		args = append(args, "--config", "openai_base_url="+value)
+	}
 	threadID, resumed := t.ID()
+	if t.options.Model != "" {
+		args = append(args, "--model", t.options.Model)
+	}
 	if t.options.ThreadSource != "" && !resumed {
 		args = append(args, "--thread-source", t.options.ThreadSource)
+	}
+	if t.options.SandboxMode != "" {
+		args = append(args, "--sandbox", string(t.options.SandboxMode))
+	}
+	if t.options.WorkingDirectory != "" {
+		args = append(args, "--cd", t.options.WorkingDirectory)
+	}
+	for _, directory := range t.options.AdditionalDirectories {
+		args = append(args, "--add-dir", directory)
+	}
+	if t.options.SkipGitRepoCheck {
+		args = append(args, "--skip-git-repo-check")
+	}
+	if t.options.ModelReasoningEffort != "" {
+		args = append(args, "--config", `model_reasoning_effort="`+string(t.options.ModelReasoningEffort)+`"`)
+	}
+	switch t.options.NetworkAccess {
+	case NetworkAccessEnabled:
+		args = append(args, "--config", "sandbox_workspace_write.network_access=true")
+	case NetworkAccessDisabled:
+		args = append(args, "--config", "sandbox_workspace_write.network_access=false")
+	}
+	if t.options.WebSearchMode != "" {
+		args = append(args, "--config", `web_search="`+string(t.options.WebSearchMode)+`"`)
+	}
+	if t.options.ApprovalPolicy != "" {
+		args = append(args, "--config", `approval_policy="`+string(t.options.ApprovalPolicy)+`"`)
 	}
 	if resumed {
 		args = append(args, "resume", threadID)
@@ -183,6 +310,11 @@ func (t *Thread) execute(
 	if !completed {
 		yield(nil, &ProtocolError{Message: "process exited without turn.completed"})
 	}
+}
+
+func snapshotThreadOptions(options ThreadOptions) ThreadOptions {
+	options.AdditionalDirectories = slices.Clone(options.AdditionalDirectories)
+	return options
 }
 
 type eventHeader struct {
