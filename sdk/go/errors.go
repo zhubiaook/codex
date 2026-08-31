@@ -2,6 +2,21 @@ package codex
 
 import "fmt"
 
+// ValidationError reports invalid SDK input or options.
+type ValidationError struct {
+	Field string
+	Err   error
+}
+
+func (e *ValidationError) Error() string {
+	return fmt.Sprintf("codex: invalid %s: %v", e.Field, e.Err)
+}
+
+// Unwrap returns the underlying validation error.
+func (e *ValidationError) Unwrap() error {
+	return e.Err
+}
+
 // ExecutableError reports that the Codex CLI executable could not be resolved.
 type ExecutableError struct {
 	Path string

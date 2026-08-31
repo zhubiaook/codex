@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/zhubiaook/codex/sdk/go"
@@ -174,6 +175,121 @@ func TestClientSnapshotsEnvironment(t *testing.T) {
 	}
 	if turn.FinalResponse != "The test fails in parser.go." {
 		t.Errorf("Turn.FinalResponse = %q", turn.FinalResponse)
+	}
+}
+
+func TestThreadContinuesWithEstablishedID(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "sequence-state")
+	client, err := codex.NewClient(codex.ClientOptions{
+		CodexPath: buildFakeCodex(t),
+		Env: map[string]string{
+			"CODEX_FAKE_SCENARIO": "sequence",
+			"CODEX_FAKE_STATE":    statePath,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	thread := client.StartThread(codex.ThreadOptions{ThreadSource: "automated_review"})
+
+	first, err := thread.Run(t.Context(), "first", codex.TurnOptions{})
+	if err != nil {
+		t.Fatalf("first Run() error = %v", err)
+	}
+	if first.FinalResponse != "first response" {
+		t.Errorf("first Turn.FinalResponse = %q", first.FinalResponse)
+	}
+	if id, ok := thread.ID(); !ok || id != "thread-sequence" {
+		t.Errorf("Thread.ID() = %q, %t, want %q, true", id, ok, "thread-sequence")
+	}
+
+	second, err := thread.Run(t.Context(), "second", codex.TurnOptions{})
+	if err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+	if second.FinalResponse != "second response" {
+		t.Errorf("second Turn.FinalResponse = %q", second.FinalResponse)
+	}
+}
+
+func TestClientResumesPersistedThread(t *testing.T) {
+	client, err := codex.NewClient(codex.ClientOptions{
+		CodexPath: buildFakeCodex(t),
+		Env: map[string]string{
+			"CODEX_FAKE_SCENARIO": "resume",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	thread, err := client.ResumeThread(
+		"persisted-thread",
+		codex.ThreadOptions{ThreadSource: "must-not-be-sent"},
+	)
+	if err != nil {
+		t.Fatalf("ResumeThread() error = %v", err)
+	}
+	if id, ok := thread.ID(); !ok || id != "persisted-thread" {
+		t.Errorf("Thread.ID() = %q, %t, want %q, true", id, ok, "persisted-thread")
+	}
+
+	turn, err := thread.Run(t.Context(), "resume", codex.TurnOptions{})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if turn.FinalResponse != "resumed response" {
+		t.Errorf("Turn.FinalResponse = %q", turn.FinalResponse)
+	}
+}
+
+func TestClientRejectsEmptyResumeID(t *testing.T) {
+	client, err := codex.NewClient(codex.ClientOptions{CodexPath: buildFakeCodex(t)})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = client.ResumeThread("", codex.ThreadOptions{})
+	validationError, ok := errors.AsType[*codex.ValidationError](err)
+	if !ok {
+		t.Fatalf("ResumeThread() error = %T %v, want *codex.ValidationError", err, err)
+	}
+	if validationError.Field != "id" {
+		t.Errorf("ValidationError.Field = %q, want id", validationError.Field)
+	}
+}
+
+func TestThreadIDIsSafeForConcurrentReaders(t *testing.T) {
+	client, err := codex.NewClient(codex.ClientOptions{
+		CodexPath: buildFakeCodex(t),
+		Env: map[string]string{
+			"CODEX_FAKE_SCENARIO": "success",
+			"EXPECTED_PROMPT":     "concurrent",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	thread := client.StartThread(codex.ThreadOptions{})
+
+	unexpectedIDs := make(chan string, 16)
+	var readers sync.WaitGroup
+	for range 16 {
+		readers.Go(func() {
+			for range 1_000 {
+				if id, ok := thread.ID(); ok && id != "thread-1" {
+					unexpectedIDs <- id
+					return
+				}
+			}
+		})
+	}
+	if _, err := thread.Run(t.Context(), "concurrent", codex.TurnOptions{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	readers.Wait()
+	close(unexpectedIDs)
+	for id := range unexpectedIDs {
+		t.Errorf("Thread.ID() returned unexpected ID %q", id)
 	}
 }
 

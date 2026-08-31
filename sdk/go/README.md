@@ -50,3 +50,29 @@ func main() {
 Set `ClientOptions.CodexPath` to use a specific Codex CLI executable. Set
 `ClientOptions.Env` to replace the child process environment; leave it nil to
 snapshot the current process environment when the Client is created.
+
+Call `Run` repeatedly on the same Thread to continue the conversation:
+
+```go
+first, err := thread.Run(ctx, "Diagnose the failure.", codex.TurnOptions{})
+if err != nil {
+	return err
+}
+second, err := thread.Run(ctx, "Implement the fix.", codex.TurnOptions{})
+```
+
+Threads are persisted by the Codex CLI. Save the identifier and reconstruct the
+Thread in another process when needed:
+
+```go
+threadID, ok := thread.ID()
+if !ok {
+	return errors.New("the Thread has not started")
+}
+
+resumed, err := client.ResumeThread(threadID, codex.ThreadOptions{})
+if err != nil {
+	return err
+}
+turn, err := resumed.Run(ctx, "Continue the work.", codex.TurnOptions{})
+```

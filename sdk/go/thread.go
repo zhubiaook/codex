@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"sync"
 )
 
 const (
@@ -18,7 +19,11 @@ const (
 )
 
 // ThreadOptions configures a Thread.
-type ThreadOptions struct{}
+type ThreadOptions struct {
+	// ThreadSource classifies a newly created Thread. It is not sent when a
+	// Thread is resumed.
+	ThreadSource string
+}
 
 // TurnOptions configures one Turn.
 type TurnOptions struct{}
@@ -32,11 +37,28 @@ type TurnInput interface {
 type Thread struct {
 	client  *Client
 	options ThreadOptions
+	mu      sync.RWMutex
+	id      string
+}
+
+// ID returns the Thread identifier after it has been established by the CLI.
+func (t *Thread) ID() (string, bool) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.id, t.id != ""
 }
 
 // Run provides input to the agent and returns the completed Turn.
 func (t *Thread) Run[I TurnInput](ctx context.Context, input I, options TurnOptions) (Turn, error) {
-	command := exec.CommandContext(ctx, t.client.executable, "exec", "--experimental-json")
+	args := []string{"exec", "--experimental-json"}
+	threadID, resumed := t.ID()
+	if t.options.ThreadSource != "" && !resumed {
+		args = append(args, "--thread-source", t.options.ThreadSource)
+	}
+	if resumed {
+		args = append(args, "resume", threadID)
+	}
+	command := exec.CommandContext(ctx, t.client.executable, args...)
 	command.Env = t.client.environment
 	command.Stdin = bytes.NewBufferString(string(input))
 	stdout, err := command.StdoutPipe()
@@ -56,7 +78,7 @@ func (t *Thread) Run[I TurnInput](ctx context.Context, input I, options TurnOpti
 	line := 0
 	for scanner.Scan() {
 		line++
-		if err := consumeEvent(scanner.Bytes(), &turn, &completed); err != nil {
+		if err := t.consumeEvent(scanner.Bytes(), &turn, &completed); err != nil {
 			_ = command.Process.Kill()
 			_ = command.Wait()
 			return Turn{}, &DecodeError{
@@ -98,6 +120,10 @@ type eventHeader struct {
 	Type string `json:"type"`
 }
 
+type threadStartedEvent struct {
+	ThreadID string `json:"thread_id"`
+}
+
 type itemCompletedEvent struct {
 	Item jsontext.Value `json:"item"`
 }
@@ -110,13 +136,25 @@ type turnCompletedEvent struct {
 	Usage Usage `json:"usage"`
 }
 
-func consumeEvent(data []byte, turn *Turn, completed *bool) error {
+func (t *Thread) consumeEvent(data []byte, turn *Turn, completed *bool) error {
 	var header eventHeader
 	if err := json.Unmarshal(data, &header); err != nil {
 		return err
 	}
 	switch header.Type {
-	case "thread.started", "turn.started":
+	case "thread.started":
+		var event threadStartedEvent
+		if err := json.Unmarshal(data, &event); err != nil {
+			return err
+		}
+		if event.ThreadID == "" {
+			return errors.New("thread.started event has an empty thread_id")
+		}
+		t.mu.Lock()
+		t.id = event.ThreadID
+		t.mu.Unlock()
+		return nil
+	case "turn.started":
 		return nil
 	case "item.completed":
 		var event itemCompletedEvent

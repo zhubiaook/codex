@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"errors"
 	"maps"
 	"os"
 	"os/exec"
@@ -43,6 +44,14 @@ func NewClient(options ClientOptions) (*Client, error) {
 // StartThread creates a new Thread.
 func (c *Client) StartThread(options ThreadOptions) *Thread {
 	return &Thread{client: c, options: options}
+}
+
+// ResumeThread reconstructs a persisted Thread from its identifier.
+func (c *Client) ResumeThread(id string, options ThreadOptions) (*Thread, error) {
+	if id == "" {
+		return nil, &ValidationError{Field: "id", Err: errors.New("must not be empty")}
+	}
+	return &Thread{client: c, options: options, id: id}, nil
 }
 
 func snapshotEnvironment(environment map[string]string) []string {
