@@ -76,3 +76,30 @@ if err != nil {
 }
 turn, err := resumed.Run(ctx, "Continue the work.", codex.TurnOptions{})
 ```
+
+## Streaming Thread Events
+
+Use `RunStreamed` to process Thread Events as the Codex CLI emits them:
+
+```go
+events := thread.RunStreamed(ctx, "Implement the fix.", codex.TurnOptions{})
+for event, err := range events {
+	if err != nil {
+		return err
+	}
+	switch event := event.(type) {
+	case *codex.ItemCompletedEvent:
+		fmt.Printf("completed %T\n", event.Item)
+	case *codex.TurnCompletedEvent:
+		fmt.Printf("output tokens: %d\n", event.Usage.OutputTokens)
+	}
+}
+```
+
+The iterator is lazy and single-use: the CLI starts on the first iteration, not
+when `RunStreamed` returns. Breaking out of the loop synchronously stops and
+reaps the CLI process. Cancel the supplied context to stop a Turn from another
+goroutine or enforce a deadline.
+
+A Thread permits one active Turn and returns `ErrTurnInProgress` for a
+concurrent attempt. Separate Threads from the same Client can run concurrently.

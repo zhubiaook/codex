@@ -8,6 +8,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 )
 
 func main() {
@@ -48,10 +49,47 @@ func main() {
 			fail("unexpected resume prompt: %q", prompt)
 		}
 		emitTurn("persisted-thread", "resumed response")
+	case "stream":
+		requireArgs("exec", "--experimental-json")
+		if err := os.WriteFile(os.Getenv("CODEX_FAKE_STATE"), []byte("started"), 0o600); err != nil {
+			fail("write stream state: %v", err)
+		}
+		emitTurn("thread-stream", "stream response")
+	case "early-break":
+		runEarlyBreak(string(prompt))
+	case "cancel":
+		requireArgs("exec", "--experimental-json")
+		fmt.Println(`{"type":"thread.started","thread_id":"thread-cancel"}`)
+		time.Sleep(30 * time.Second)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown scenario: %q", os.Getenv("CODEX_FAKE_SCENARIO"))
 		os.Exit(2)
 	}
+}
+
+func runEarlyBreak(prompt string) {
+	statePath := os.Getenv("CODEX_FAKE_STATE")
+	_, err := os.Stat(statePath)
+	if errors.Is(err, os.ErrNotExist) {
+		requireArgs("exec", "--experimental-json")
+		if prompt != "first" {
+			fail("unexpected first early-break prompt: %q", prompt)
+		}
+		if err := os.WriteFile(statePath, []byte("started"), 0o600); err != nil {
+			fail("write early-break state: %v", err)
+		}
+		fmt.Println(`{"type":"thread.started","thread_id":"thread-early"}`)
+		time.Sleep(30 * time.Second)
+		return
+	}
+	if err != nil {
+		fail("read early-break state: %v", err)
+	}
+	requireArgs("exec", "--experimental-json", "resume", "thread-early")
+	if prompt != "second" {
+		fail("unexpected second early-break prompt: %q", prompt)
+	}
+	emitTurn("thread-early", "after early break")
 }
 
 func runSequence(prompt string) {

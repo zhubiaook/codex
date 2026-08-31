@@ -1,6 +1,16 @@
 package codex
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
+
+var (
+	// ErrTurnInProgress indicates that the Thread already has an active Turn.
+	ErrTurnInProgress = errors.New("codex: turn already in progress")
+	// ErrStreamConsumed indicates that a Thread Event stream was already used.
+	ErrStreamConsumed = errors.New("codex: event stream already consumed")
+)
 
 // ValidationError reports invalid SDK input or options.
 type ValidationError struct {
