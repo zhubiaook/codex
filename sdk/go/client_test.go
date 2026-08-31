@@ -1,0 +1,193 @@
+package codex_test
+
+import (
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"runtime"
+	"strings"
+	"testing"
+
+	"github.com/zhubiaook/codex/sdk/go"
+)
+
+func TestClientRunsTextTurn(t *testing.T) {
+	executable := buildFakeCodex(t)
+	client, err := codex.NewClient(codex.ClientOptions{
+		CodexPath: executable,
+		Env: map[string]string{
+			"CODEX_FAKE_SCENARIO": "success",
+			"EXPECTED_PROMPT":     "Diagnose the failing test.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	thread := client.StartThread(codex.ThreadOptions{})
+	got, err := thread.Run(t.Context(), "Diagnose the failing test.", codex.TurnOptions{})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	want := codex.Turn{
+		Items: []codex.ThreadItem{
+			&codex.AgentMessageItem{ID: "item-1", Text: "The test fails in parser.go."},
+		},
+		FinalResponse: "The test fails in parser.go.",
+		Usage: &codex.Usage{
+			InputTokens:           42,
+			CachedInputTokens:     12,
+			CacheWriteInputTokens: 3,
+			OutputTokens:          8,
+			ReasoningOutputTokens: 2,
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Run() = %#v, want %#v", got, want)
+	}
+}
+
+func TestClientReturnsBoundedProcessError(t *testing.T) {
+	client, err := codex.NewClient(codex.ClientOptions{
+		CodexPath: buildFakeCodex(t),
+		Env: map[string]string{
+			"CODEX_FAKE_SCENARIO": "exit",
+			"EXPECTED_PROMPT":     "fail",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = client.StartThread(codex.ThreadOptions{}).Run(
+		t.Context(),
+		"fail",
+		codex.TurnOptions{},
+	)
+	execError, ok := errors.AsType[*codex.ExecError](err)
+	if !ok {
+		t.Fatalf("Run() error = %T %v, want *codex.ExecError", err, err)
+	}
+	if execError.ExitCode != 7 {
+		t.Errorf("ExecError.ExitCode = %d, want 7", execError.ExitCode)
+	}
+	if len(execError.Stderr) > (64<<10)+32 {
+		t.Errorf("len(ExecError.Stderr) = %d, want bounded stderr", len(execError.Stderr))
+	}
+	if !strings.HasSuffix(execError.Stderr, "[stderr truncated]") {
+		t.Errorf("ExecError.Stderr does not report truncation: %q", execError.Stderr)
+	}
+}
+
+func TestClientReturnsDecodeErrorForMalformedJSONL(t *testing.T) {
+	client, err := codex.NewClient(codex.ClientOptions{
+		CodexPath: buildFakeCodex(t),
+		Env: map[string]string{
+			"CODEX_FAKE_SCENARIO": "malformed",
+			"EXPECTED_PROMPT":     "decode",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = client.StartThread(codex.ThreadOptions{}).Run(
+		t.Context(),
+		"decode",
+		codex.TurnOptions{},
+	)
+	decodeError, ok := errors.AsType[*codex.DecodeError](err)
+	if !ok {
+		t.Fatalf("Run() error = %T %v, want *codex.DecodeError", err, err)
+	}
+	if decodeError.Line != 1 {
+		t.Errorf("DecodeError.Line = %d, want 1", decodeError.Line)
+	}
+	if len(decodeError.Preview) > 4<<10 {
+		t.Errorf("len(DecodeError.Preview) = %d, want at most 4096", len(decodeError.Preview))
+	}
+}
+
+func TestClientRejectsMissingTerminalEvent(t *testing.T) {
+	client, err := codex.NewClient(codex.ClientOptions{
+		CodexPath: buildFakeCodex(t),
+		Env: map[string]string{
+			"CODEX_FAKE_SCENARIO": "missing-terminal",
+			"EXPECTED_PROMPT":     "partial",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = client.StartThread(codex.ThreadOptions{}).Run(
+		t.Context(),
+		"partial",
+		codex.TurnOptions{},
+	)
+	protocolError, ok := errors.AsType[*codex.ProtocolError](err)
+	if !ok {
+		t.Fatalf("Run() error = %T %v, want *codex.ProtocolError", err, err)
+	}
+	if protocolError.Message != "process exited without turn.completed" {
+		t.Errorf("ProtocolError.Message = %q", protocolError.Message)
+	}
+}
+
+func TestNewClientRejectsMissingExecutable(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing-codex")
+	_, err := codex.NewClient(codex.ClientOptions{CodexPath: missing})
+	executableError, ok := errors.AsType[*codex.ExecutableError](err)
+	if !ok {
+		t.Fatalf("NewClient() error = %T %v, want *codex.ExecutableError", err, err)
+	}
+	if executableError.Path != missing {
+		t.Errorf("ExecutableError.Path = %q, want %q", executableError.Path, missing)
+	}
+}
+
+func TestClientSnapshotsEnvironment(t *testing.T) {
+	environment := map[string]string{
+		"CODEX_FAKE_SCENARIO": "success",
+		"EXPECTED_PROMPT":     "original",
+	}
+	client, err := codex.NewClient(codex.ClientOptions{
+		CodexPath: buildFakeCodex(t),
+		Env:       environment,
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	environment["CODEX_FAKE_SCENARIO"] = "exit"
+	environment["EXPECTED_PROMPT"] = "mutated"
+
+	turn, err := client.StartThread(codex.ThreadOptions{}).Run(
+		t.Context(),
+		"original",
+		codex.TurnOptions{},
+	)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if turn.FinalResponse != "The test fails in parser.go." {
+		t.Errorf("Turn.FinalResponse = %q", turn.FinalResponse)
+	}
+}
+
+func buildFakeCodex(t *testing.T) string {
+	t.Helper()
+	name := "fake-codex"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	executable := filepath.Join(t.TempDir(), name)
+	cmd := exec.CommandContext(t.Context(), "go", "build", "-o", executable, "./internal/testcli")
+	cmd.Env = os.Environ()
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build fake Codex CLI: %v\n%s", err, output)
+	}
+	return executable
+}
