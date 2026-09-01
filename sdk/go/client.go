@@ -110,10 +110,9 @@ func snapshotEnvironment(environment map[string]string, apiKey string) []string 
 }
 
 func splitEnvironmentEntry(entry string) (string, string, bool) {
-	for index, character := range entry {
-		if character == '=' {
-			return entry[:index], entry[index+1:], true
-		}
+	if remainder, ok := strings.CutPrefix(entry, "="); ok {
+		key, value, ok := strings.Cut(remainder, "=")
+		return "=" + key, value, ok
 	}
-	return "", "", false
+	return strings.Cut(entry, "=")
 }
