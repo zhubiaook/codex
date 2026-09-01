@@ -61,6 +61,8 @@ func main() {
 			fail("write stream state: %v", err)
 		}
 		emitTurn("thread-stream", "stream response")
+	case "backpressure":
+		runBackpressure()
 	case "early-break":
 		runEarlyBreak(string(prompt))
 	case "cancel":
@@ -81,6 +83,8 @@ func main() {
 		emitActivity()
 	case "malformed-known":
 		fmt.Println(`{"type":"item.completed","item":{"id":"command-1","type":"command_execution","command":"go test","aggregated_output":"","status":"invented"}}`)
+	case "malformed-completion":
+		fmt.Println(`{"type":"turn.completed"}`)
 	case "turn-failed":
 		fmt.Println(`{"type":"turn.failed","error":{"message":"model failed"}}`)
 	case "thread-error":
@@ -91,6 +95,20 @@ func main() {
 		fmt.Fprintf(os.Stderr, "unknown scenario: %q", os.Getenv("CODEX_FAKE_SCENARIO"))
 		os.Exit(2)
 	}
+}
+
+func runBackpressure() {
+	requireArgs("exec", "--experimental-json")
+	statePath := os.Getenv("CODEX_FAKE_STATE")
+	fmt.Println(`{"type":"thread.started","thread_id":"thread-backpressure"}`)
+	if err := os.WriteFile(statePath, []byte("writing"), 0o600); err != nil {
+		fail("write backpressure state: %v", err)
+	}
+	fmt.Printf(`{"type":"future.event","payload":"%s"}`+"\n", strings.Repeat("x", 2<<20))
+	if err := os.WriteFile(statePath, []byte("written"), 0o600); err != nil {
+		fail("advance backpressure state: %v", err)
+	}
+	fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0}}`)
 }
 
 func emitActivity() {

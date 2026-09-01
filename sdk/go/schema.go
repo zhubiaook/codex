@@ -1,14 +1,14 @@
 package codex
 
 import (
-	stdjson "encoding/json"
+	"encoding/json"
 	"encoding/json/jsontext"
 	"errors"
 	"os"
 	"path/filepath"
 )
 
-func createOutputSchemaFile(schema stdjson.RawMessage) (string, func(), error) {
+func createOutputSchemaFile(schema json.RawMessage) (string, func(), error) {
 	if schema == nil {
 		return "", func() {}, nil
 	}

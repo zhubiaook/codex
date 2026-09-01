@@ -1,6 +1,6 @@
 package codex
 
-import stdjson "encoding/json"
+import "encoding/json"
 
 // EventType identifies a Thread Event on the Codex CLI JSONL wire.
 type EventType string
@@ -111,7 +111,7 @@ func (e *ThreadErrorEvent) Error() string { return "codex: Thread Event error: "
 // UnknownEvent preserves an unrecognized Thread Event for forward compatibility.
 type UnknownEvent struct {
 	UnknownType EventType
-	Raw         stdjson.RawMessage
+	Raw         json.RawMessage
 }
 
 // EventType returns the unrecognized wire discriminator.

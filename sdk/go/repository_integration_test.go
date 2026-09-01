@@ -1,7 +1,7 @@
 package codex_test
 
 import (
-	json "encoding/json/v2"
+	jsonv2 "encoding/json/v2"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -76,7 +76,7 @@ func TestRepositoryCodexIntegration(t *testing.T) {
 	}
 
 	var request responsesRequest
-	if err := json.Unmarshal(<-requests, &request); err != nil {
+	if err := jsonv2.Unmarshal(<-requests, &request); err != nil {
 		t.Fatalf("decode Responses API request: %v", err)
 	}
 	if !requestContainsText(request, "Reply with the integration fixture.") {

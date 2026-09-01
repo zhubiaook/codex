@@ -112,6 +112,31 @@ func TestClientReturnsDecodeErrorForMalformedJSONL(t *testing.T) {
 	}
 }
 
+func TestClientRejectsMalformedKnownEvent(t *testing.T) {
+	client, err := codex.NewClient(codex.ClientOptions{
+		CodexPath: buildFakeCodex(t),
+		Env: map[string]string{
+			"CODEX_FAKE_SCENARIO": "malformed-completion",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+
+	_, err = client.StartThread(codex.ThreadOptions{}).Run(
+		t.Context(),
+		"malformed known event",
+		codex.TurnOptions{},
+	)
+	decodeError, ok := errors.AsType[*codex.DecodeError](err)
+	if !ok {
+		t.Fatalf("Run() error = %T %v, want *codex.DecodeError", err, err)
+	}
+	if decodeError.Line != 1 {
+		t.Errorf("DecodeError.Line = %d, want 1", decodeError.Line)
+	}
+}
+
 func TestClientRejectsMissingTerminalEvent(t *testing.T) {
 	client, err := codex.NewClient(codex.ClientOptions{
 		CodexPath: buildFakeCodex(t),

@@ -4,6 +4,7 @@ import (
 	json "encoding/json/v2"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"reflect"
 	"slices"
@@ -15,11 +16,7 @@ func serializeConfig(config map[string]any) ([]string, error) {
 	if config == nil {
 		return nil, nil
 	}
-	keys := make([]string, 0, len(config))
-	for key := range config {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
+	keys := slices.Sorted(maps.Keys(config))
 	overrides := make([]string, 0, len(keys))
 	for _, key := range keys {
 		if key == "" {
@@ -38,11 +35,7 @@ func flattenConfigValue(value any, path string, overrides *[]string) error {
 			*overrides = append(*overrides, path+"={}")
 			return nil
 		}
-		keys := make([]string, 0, len(object))
-		for key := range object {
-			keys = append(keys, key)
-		}
-		slices.Sort(keys)
+		keys := slices.Sorted(maps.Keys(object))
 		for _, key := range keys {
 			if key == "" {
 				return configValidationError(path, "key must not be empty")
@@ -106,11 +99,7 @@ func renderTOMLValue(value any, path string) (string, error) {
 		}
 		return "[" + strings.Join(parts, ", ") + "]", nil
 	case map[string]any:
-		keys := make([]string, 0, len(value))
-		for key := range value {
-			keys = append(keys, key)
-		}
-		slices.Sort(keys)
+		keys := slices.Sorted(maps.Keys(value))
 		parts := make([]string, 0, len(keys))
 		for _, key := range keys {
 			if key == "" {

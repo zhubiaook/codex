@@ -1,6 +1,6 @@
 package codex
 
-import stdjson "encoding/json"
+import "encoding/json"
 
 // ItemType identifies a Thread Item on the Codex CLI JSONL wire.
 type ItemType string
@@ -129,9 +129,9 @@ const (
 // MCPToolCallResult contains a successful MCP tool result without imposing an
 // MCP SDK dependency on callers.
 type MCPToolCallResult struct {
-	Content           []stdjson.RawMessage `json:"content"`
-	Meta              stdjson.RawMessage   `json:"_meta"`
-	StructuredContent stdjson.RawMessage   `json:"structured_content"`
+	Content           []json.RawMessage `json:"content"`
+	Meta              json.RawMessage   `json:"_meta"`
+	StructuredContent json.RawMessage   `json:"structured_content"`
 }
 
 // MCPToolCallError describes a failed MCP tool call.
@@ -144,7 +144,7 @@ type MCPToolCallItem struct {
 	ID        string             `json:"id"`
 	Server    string             `json:"server"`
 	Tool      string             `json:"tool"`
-	Arguments stdjson.RawMessage `json:"arguments"`
+	Arguments json.RawMessage    `json:"arguments"`
 	Result    *MCPToolCallResult `json:"result"`
 	Error     *MCPToolCallError  `json:"error"`
 	Status    MCPToolCallStatus  `json:"status"`
@@ -194,7 +194,7 @@ func (*ErrorItem) isThreadItem()      {}
 type UnknownItem struct {
 	ID          string
 	UnknownType ItemType
-	Raw         stdjson.RawMessage
+	Raw         json.RawMessage
 }
 
 // ItemType returns the unrecognized wire discriminator.

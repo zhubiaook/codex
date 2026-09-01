@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	stdjson "encoding/json"
-	json "encoding/json/v2"
+	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"iter"
 	"os/exec"
@@ -122,7 +122,7 @@ const (
 type TurnOptions struct {
 	// OutputSchema is a JSON Schema that constrains the agent's final response.
 	// It must be a valid top-level JSON object.
-	OutputSchema stdjson.RawMessage
+	OutputSchema json.RawMessage
 }
 
 // StructuredInput combines prompt text with local image paths.
@@ -194,7 +194,7 @@ type StructuredTurn[T any] struct {
 func (t *Thread) RunJSON[T any, I TurnInput](
 	ctx context.Context,
 	input I,
-	schema stdjson.RawMessage,
+	schema json.RawMessage,
 	options TurnOptions,
 ) (StructuredTurn[T], error) {
 	if schema == nil {
@@ -215,7 +215,7 @@ func (t *Thread) RunJSON[T any, I TurnInput](
 		return StructuredTurn[T]{}, err
 	}
 	var output T
-	if err := json.Unmarshal([]byte(turn.FinalResponse), &output, json.RejectUnknownMembers(true)); err != nil {
+	if err := jsonv2.Unmarshal([]byte(turn.FinalResponse), &output, jsonv2.RejectUnknownMembers(true)); err != nil {
 		return StructuredTurn[T]{}, &OutputDecodeError{
 			Target: reflect.TypeFor[T]().String(),
 			Err:    err,

@@ -2,7 +2,7 @@ package codex_test
 
 import (
 	"context"
-	stdjson "encoding/json"
+	"encoding/json"
 	"fmt"
 
 	"github.com/zhubiaook/codex/sdk/go"
@@ -46,7 +46,7 @@ func ExampleThread_RunJSON() {
 	type Summary struct {
 		Text string `json:"text"`
 	}
-	schema := stdjson.RawMessage(`{
+	schema := json.RawMessage(`{
   "type": "object",
   "properties": {"text": {"type": "string"}},
   "required": ["text"],

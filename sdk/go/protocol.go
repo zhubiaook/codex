@@ -2,9 +2,9 @@ package codex
 
 import (
 	"bytes"
-	stdjson "encoding/json"
+	"encoding/json"
 	"encoding/json/jsontext"
-	json "encoding/json/v2"
+	jsonv2 "encoding/json/v2"
 	"fmt"
 	"slices"
 )
@@ -24,7 +24,7 @@ type itemHeader struct {
 
 func decodeThreadEvent(data []byte) (ThreadEvent, error) {
 	var header eventHeader
-	if err := json.Unmarshal(data, &header); err != nil {
+	if err := jsonv2.Unmarshal(data, &header); err != nil {
 		return nil, err
 	}
 	if header.Type == "" {
@@ -33,7 +33,7 @@ func decodeThreadEvent(data []byte) (ThreadEvent, error) {
 	switch header.Type {
 	case EventThreadStarted:
 		var event ThreadStartedEvent
-		if err := json.Unmarshal(data, &event); err != nil {
+		if err := jsonv2.Unmarshal(data, &event); err != nil {
 			return nil, err
 		}
 		if event.ThreadID == "" {
@@ -44,13 +44,20 @@ func decodeThreadEvent(data []byte) (ThreadEvent, error) {
 		return &TurnStartedEvent{}, nil
 	case EventTurnCompleted:
 		var event TurnCompletedEvent
-		if err := json.Unmarshal(data, &event); err != nil {
+		if err := jsonv2.Unmarshal(data, &event); err != nil {
 			return nil, err
+		}
+		members, err := requiredJSONMembers(data, "usage")
+		if err != nil {
+			return nil, err
+		}
+		if _, err := requiredJSONMembers(members["usage"], "input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens"); err != nil {
+			return nil, fmt.Errorf("turn.completed usage: %w", err)
 		}
 		return &event, nil
 	case EventTurnFailed:
 		var event TurnFailedEvent
-		if err := json.Unmarshal(data, &event); err != nil {
+		if err := jsonv2.Unmarshal(data, &event); err != nil {
 			return nil, err
 		}
 		if event.Error.Message == "" {
@@ -59,7 +66,7 @@ func decodeThreadEvent(data []byte) (ThreadEvent, error) {
 		return &event, nil
 	case EventItemStarted, EventItemUpdated, EventItemCompleted:
 		var wire itemEventWire
-		if err := json.Unmarshal(data, &wire); err != nil {
+		if err := jsonv2.Unmarshal(data, &wire); err != nil {
 			return nil, err
 		}
 		if wire.Item == nil {
@@ -79,7 +86,7 @@ func decodeThreadEvent(data []byte) (ThreadEvent, error) {
 		}
 	case EventError:
 		var event ThreadErrorEvent
-		if err := json.Unmarshal(data, &event); err != nil {
+		if err := jsonv2.Unmarshal(data, &event); err != nil {
 			return nil, err
 		}
 		if event.Message == "" {
@@ -87,14 +94,14 @@ func decodeThreadEvent(data []byte) (ThreadEvent, error) {
 		}
 		return &event, nil
 	default:
-		return &UnknownEvent{UnknownType: header.Type, Raw: stdjson.RawMessage(bytes.Clone(data))}, nil
+		return &UnknownEvent{UnknownType: header.Type, Raw: json.RawMessage(bytes.Clone(data))}, nil
 	}
 	return nil, protocolPayloadError(fmt.Sprintf("unsupported Thread Event %q", header.Type))
 }
 
 func decodeThreadItem(data []byte) (ThreadItem, error) {
 	var header itemHeader
-	if err := json.Unmarshal(data, &header); err != nil {
+	if err := jsonv2.Unmarshal(data, &header); err != nil {
 		return nil, err
 	}
 	if header.Type == "" {
@@ -106,19 +113,28 @@ func decodeThreadItem(data []byte) (ThreadItem, error) {
 	switch header.Type {
 	case ItemAgentMessage:
 		var item AgentMessageItem
-		if err := json.Unmarshal(data, &item); err != nil {
+		if err := jsonv2.Unmarshal(data, &item); err != nil {
+			return nil, err
+		}
+		if _, err := requiredJSONMembers(data, "text"); err != nil {
 			return nil, err
 		}
 		return &item, nil
 	case ItemReasoning:
 		var item ReasoningItem
-		if err := json.Unmarshal(data, &item); err != nil {
+		if err := jsonv2.Unmarshal(data, &item); err != nil {
+			return nil, err
+		}
+		if _, err := requiredJSONMembers(data, "text"); err != nil {
 			return nil, err
 		}
 		return &item, nil
 	case ItemCommandExecution:
 		var item CommandExecutionItem
-		if err := json.Unmarshal(data, &item); err != nil {
+		if err := jsonv2.Unmarshal(data, &item); err != nil {
+			return nil, err
+		}
+		if _, err := requiredJSONMembers(data, "command", "aggregated_output", "status"); err != nil {
 			return nil, err
 		}
 		if !slices.Contains([]CommandExecutionStatus{CommandInProgress, CommandCompleted, CommandFailed}, item.Status) {
@@ -127,13 +143,24 @@ func decodeThreadItem(data []byte) (ThreadItem, error) {
 		return &item, nil
 	case ItemFileChange:
 		var item FileChangeItem
-		if err := json.Unmarshal(data, &item); err != nil {
+		if err := jsonv2.Unmarshal(data, &item); err != nil {
+			return nil, err
+		}
+		members, err := requiredJSONMembers(data, "changes", "status")
+		if err != nil {
 			return nil, err
 		}
 		if !slices.Contains([]PatchApplyStatus{PatchApplyCompleted, PatchApplyFailed}, item.Status) {
 			return nil, protocolPayloadError(fmt.Sprintf("file_change has invalid status %q", item.Status))
 		}
-		for _, change := range item.Changes {
+		var rawChanges []jsontext.Value
+		if err := jsonv2.Unmarshal(members["changes"], &rawChanges); err != nil {
+			return nil, err
+		}
+		for index, change := range item.Changes {
+			if _, err := requiredJSONMembers(rawChanges[index], "path", "kind"); err != nil {
+				return nil, fmt.Errorf("file_change change %d: %w", index, err)
+			}
 			if change.Path == "" || !slices.Contains([]PatchChangeKind{PatchChangeAdd, PatchChangeDelete, PatchChangeUpdate}, change.Kind) {
 				return nil, protocolPayloadError("file_change has an invalid change")
 			}
@@ -141,42 +168,110 @@ func decodeThreadItem(data []byte) (ThreadItem, error) {
 		return &item, nil
 	case ItemMCPToolCall:
 		var item MCPToolCallItem
-		if err := json.Unmarshal(data, &item); err != nil {
+		if err := jsonv2.Unmarshal(data, &item); err != nil {
 			return nil, err
 		}
-		if item.Server == "" || item.Tool == "" || item.Arguments == nil {
+		members, err := presentJSONMembers(data, "server", "tool", "arguments", "status")
+		if err != nil {
+			return nil, err
+		}
+		if isJSONNull(members["server"]) || isJSONNull(members["tool"]) || isJSONNull(members["status"]) || item.Server == "" || item.Tool == "" {
 			return nil, protocolPayloadError("mcp_tool_call is missing server, tool, or arguments")
 		}
 		if !slices.Contains([]MCPToolCallStatus{MCPToolCallInProgress, MCPToolCallCompleted, MCPToolCallFailed}, item.Status) {
 			return nil, protocolPayloadError(fmt.Sprintf("mcp_tool_call has invalid status %q", item.Status))
 		}
+		if item.Result != nil {
+			resultMembers, err := presentJSONMembers(members["result"], "content", "structured_content")
+			if err != nil {
+				return nil, fmt.Errorf("mcp_tool_call result: %w", err)
+			}
+			if isJSONNull(resultMembers["content"]) {
+				return nil, protocolPayloadError("mcp_tool_call result content must not be null")
+			}
+		}
+		if item.Error != nil && item.Error.Message == "" {
+			return nil, protocolPayloadError("mcp_tool_call error has an empty message")
+		}
 		cloneMCPPayloads(&item)
 		return &item, nil
 	case ItemWebSearch:
 		var item WebSearchItem
-		if err := json.Unmarshal(data, &item); err != nil {
+		if err := jsonv2.Unmarshal(data, &item); err != nil {
+			return nil, err
+		}
+		if _, err := requiredJSONMembers(data, "query"); err != nil {
 			return nil, err
 		}
 		return &item, nil
 	case ItemTodoList:
 		var item TodoListItem
-		if err := json.Unmarshal(data, &item); err != nil {
+		if err := jsonv2.Unmarshal(data, &item); err != nil {
 			return nil, err
+		}
+		members, err := requiredJSONMembers(data, "items")
+		if err != nil {
+			return nil, err
+		}
+		var rawItems []jsontext.Value
+		if err := jsonv2.Unmarshal(members["items"], &rawItems); err != nil {
+			return nil, err
+		}
+		for index, rawItem := range rawItems {
+			if _, err := requiredJSONMembers(rawItem, "text", "completed"); err != nil {
+				return nil, fmt.Errorf("todo_list item %d: %w", index, err)
+			}
 		}
 		return &item, nil
 	case ItemError:
 		var item ErrorItem
-		if err := json.Unmarshal(data, &item); err != nil {
+		if err := jsonv2.Unmarshal(data, &item); err != nil {
 			return nil, err
+		}
+		if _, err := requiredJSONMembers(data, "message"); err != nil {
+			return nil, err
+		}
+		if item.Message == "" {
+			return nil, protocolPayloadError("error Thread Item has an empty message")
 		}
 		return &item, nil
 	default:
 		return &UnknownItem{
 			ID:          header.ID,
 			UnknownType: header.Type,
-			Raw:         stdjson.RawMessage(bytes.Clone(data)),
+			Raw:         json.RawMessage(bytes.Clone(data)),
 		}, nil
 	}
+}
+
+func requiredJSONMembers(data []byte, names ...string) (map[string]jsontext.Value, error) {
+	members, err := presentJSONMembers(data, names...)
+	if err != nil {
+		return nil, err
+	}
+	for _, name := range names {
+		if isJSONNull(members[name]) {
+			return nil, protocolPayloadError(fmt.Sprintf("payload member %q must not be null", name))
+		}
+	}
+	return members, nil
+}
+
+func presentJSONMembers(data []byte, names ...string) (map[string]jsontext.Value, error) {
+	var members map[string]jsontext.Value
+	if err := jsonv2.Unmarshal(data, &members); err != nil {
+		return nil, err
+	}
+	for _, name := range names {
+		if _, ok := members[name]; !ok {
+			return nil, protocolPayloadError(fmt.Sprintf("payload is missing member %q", name))
+		}
+	}
+	return members, nil
+}
+
+func isJSONNull(data []byte) bool {
+	return bytes.Equal(bytes.TrimSpace(data), []byte("null"))
 }
 
 func cloneMCPPayloads(item *MCPToolCallItem) {

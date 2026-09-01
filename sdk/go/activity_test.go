@@ -1,7 +1,7 @@
 package codex_test
 
 import (
-	stdjson "encoding/json"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
@@ -46,12 +46,12 @@ func TestThreadDecodesAgentActivityAndUnknownVariants(t *testing.T) {
 		&codex.ItemCompletedEvent{Item: &codex.AgentMessageItem{ID: "message-1", Text: "Done."}},
 		&codex.UnknownEvent{
 			UnknownType: "future.event",
-			Raw:         stdjson.RawMessage(`{"type":"future.event","answer":42}`),
+			Raw:         json.RawMessage(`{"type":"future.event","answer":42}`),
 		},
 		&codex.ItemCompletedEvent{Item: &codex.UnknownItem{
 			ID:          "future-1",
 			UnknownType: "future_item",
-			Raw:         stdjson.RawMessage(`{"id":"future-1","type":"future_item","payload":{"ok":true}}`),
+			Raw:         json.RawMessage(`{"id":"future-1","type":"future_item","payload":{"ok":true}}`),
 		}},
 		&codex.TurnCompletedEvent{Usage: codex.Usage{InputTokens: 4, CachedInputTokens: 2, OutputTokens: 3, ReasoningOutputTokens: 1}},
 	}

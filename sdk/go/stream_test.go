@@ -3,6 +3,7 @@ package codex_test
 import (
 	"context"
 	"errors"
+	"iter"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -60,6 +61,67 @@ func TestRunStreamedIsLazyAndYieldsThreadEvents(t *testing.T) {
 	if _, err := os.Stat(statePath); err != nil {
 		t.Errorf("fake Codex process did not start: %v", err)
 	}
+}
+
+func TestRunStreamedAppliesConsumerBackpressure(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "backpressure-state")
+	client, err := codex.NewClient(codex.ClientOptions{
+		CodexPath: buildFakeCodex(t),
+		Env: map[string]string{
+			"CODEX_FAKE_SCENARIO": "backpressure",
+			"CODEX_FAKE_STATE":    statePath,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	stream := client.StartThread(codex.ThreadOptions{}).RunStreamed(
+		t.Context(),
+		"backpressure",
+		codex.TurnOptions{},
+	)
+	next, stop := iter.Pull2(stream)
+	defer stop()
+
+	event, err, ok := next()
+	if !ok || err != nil {
+		t.Fatalf("first stream value = (%T, %v, %v)", event, err, ok)
+	}
+	if _, ok := event.(*codex.ThreadStartedEvent); !ok {
+		t.Fatalf("first Thread Event = %T, want *codex.ThreadStartedEvent", event)
+	}
+	waitForFileContents(t, statePath, "writing")
+	time.Sleep(100 * time.Millisecond)
+	contents, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read backpressure state: %v", err)
+	}
+	if string(contents) != "writing" {
+		t.Fatalf("producer advanced while consumer was paused: state = %q", contents)
+	}
+
+	event, err, ok = next()
+	if !ok || err != nil {
+		t.Fatalf("second stream value = (%T, %v, %v)", event, err, ok)
+	}
+	if _, ok := event.(*codex.UnknownEvent); !ok {
+		t.Fatalf("second Thread Event = %T, want *codex.UnknownEvent", event)
+	}
+	waitForFileContents(t, statePath, "written")
+}
+
+func waitForFileContents(t *testing.T, path string, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		contents, err := os.ReadFile(path)
+		if err == nil && string(contents) == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	contents, err := os.ReadFile(path)
+	t.Fatalf("file %q = %q, %v; want %q", path, contents, err, want)
 }
 
 func TestRunStreamedEarlyBreakCleansUpAndReleasesThread(t *testing.T) {

@@ -1,7 +1,7 @@
 package codex_test
 
 import (
-	stdjson "encoding/json"
+	"encoding/json"
 	"reflect"
 	"testing"
 
@@ -28,24 +28,24 @@ func TestThreadDecodesIntegrationAndPlanningItems(t *testing.T) {
 	}
 	want := []codex.ThreadItem{
 		&codex.MCPToolCallItem{
-			ID: "mcp-start", Server: "files", Tool: "read", Arguments: stdjson.RawMessage(`{"path":"README.md"}`), Status: codex.MCPToolCallInProgress,
+			ID: "mcp-start", Server: "files", Tool: "read", Arguments: json.RawMessage(`{"path":"README.md"}`), Status: codex.MCPToolCallInProgress,
 		},
 		&codex.MCPToolCallItem{
-			ID: "mcp-start", Server: "files", Tool: "read", Arguments: stdjson.RawMessage(`{"path":"README.md"}`),
-			Result: &codex.MCPToolCallResult{Content: []stdjson.RawMessage{}, StructuredContent: stdjson.RawMessage(`null`)},
+			ID: "mcp-start", Server: "files", Tool: "read", Arguments: json.RawMessage(`{"path":"README.md"}`),
+			Result: &codex.MCPToolCallResult{Content: []json.RawMessage{}, StructuredContent: json.RawMessage(`null`)},
 			Status: codex.MCPToolCallInProgress,
 		},
 		&codex.MCPToolCallItem{
-			ID: "mcp-success", Server: "db", Tool: "query", Arguments: stdjson.RawMessage(`{"sql":"select 1"}`),
+			ID: "mcp-success", Server: "db", Tool: "query", Arguments: json.RawMessage(`{"sql":"select 1"}`),
 			Result: &codex.MCPToolCallResult{
-				Content:           []stdjson.RawMessage{stdjson.RawMessage(`{"type":"text","text":"1"}`)},
-				Meta:              stdjson.RawMessage(`{"trace":"abc"}`),
-				StructuredContent: stdjson.RawMessage(`{"rows":[1]}`),
+				Content:           []json.RawMessage{json.RawMessage(`{"type":"text","text":"1"}`)},
+				Meta:              json.RawMessage(`{"trace":"abc"}`),
+				StructuredContent: json.RawMessage(`{"rows":[1]}`),
 			},
 			Status: codex.MCPToolCallCompleted,
 		},
 		&codex.MCPToolCallItem{
-			ID: "mcp-failure", Server: "db", Tool: "query", Arguments: stdjson.RawMessage(`null`),
+			ID: "mcp-failure", Server: "db", Tool: "query", Arguments: json.RawMessage(`null`),
 			Error: &codex.MCPToolCallError{Message: "permission denied"}, Status: codex.MCPToolCallFailed,
 		},
 		&codex.WebSearchItem{ID: "search-1", Query: "Go 1.27 release notes"},
