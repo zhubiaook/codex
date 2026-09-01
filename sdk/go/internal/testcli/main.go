@@ -73,10 +73,47 @@ func main() {
 		emitTurn("thread-args", "configured")
 	case "structured", "structured-exit", "structured-cancel", "structured-early-break":
 		runStructured(os.Getenv("CODEX_FAKE_SCENARIO"))
+	case "activity":
+		emitActivity()
+	case "malformed-known":
+		fmt.Println(`{"type":"item.completed","item":{"id":"command-1","type":"command_execution","command":"go test","aggregated_output":"","status":"invented"}}`)
+	case "turn-failed":
+		fmt.Println(`{"type":"turn.failed","error":{"message":"model failed"}}`)
+	case "thread-error":
+		fmt.Println(`{"type":"error","message":"stream failed"}`)
+	case "integration-items":
+		emitIntegrationItems()
 	default:
 		fmt.Fprintf(os.Stderr, "unknown scenario: %q", os.Getenv("CODEX_FAKE_SCENARIO"))
 		os.Exit(2)
 	}
+}
+
+func emitActivity() {
+	fmt.Println(`{"type":"thread.started","thread_id":"thread-activity"}`)
+	fmt.Println(`{"type":"turn.started"}`)
+	fmt.Println(`{"type":"item.started","item":{"id":"command-1","type":"command_execution","command":"go test ./...","aggregated_output":"","status":"in_progress"}}`)
+	fmt.Println(`{"type":"item.updated","item":{"id":"command-1","type":"command_execution","command":"go test ./...","aggregated_output":"ok\n","status":"in_progress"}}`)
+	fmt.Println(`{"type":"item.completed","item":{"id":"command-1","type":"command_execution","command":"go test ./...","aggregated_output":"ok\n","exit_code":0,"status":"completed"}}`)
+	fmt.Println(`{"type":"item.completed","item":{"id":"reasoning-1","type":"reasoning","text":"Inspect the failure."}}`)
+	fmt.Println(`{"type":"item.completed","item":{"id":"patch-1","type":"file_change","changes":[{"path":"new.go","kind":"add"},{"path":"old.go","kind":"delete"},{"path":"changed.go","kind":"update"}],"status":"completed"}}`)
+	fmt.Println(`{"type":"item.completed","item":{"id":"message-1","type":"agent_message","text":"Done."}}`)
+	fmt.Println(`{"type":"future.event","answer":42}`)
+	fmt.Println(`{"type":"item.completed","item":{"id":"future-1","type":"future_item","payload":{"ok":true}}}`)
+	fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":4,"cached_input_tokens":2,"output_tokens":3,"reasoning_output_tokens":1}}`)
+}
+
+func emitIntegrationItems() {
+	fmt.Println(`{"type":"thread.started","thread_id":"thread-integrations"}`)
+	fmt.Println(`{"type":"turn.started"}`)
+	fmt.Println(`{"type":"item.started","item":{"id":"mcp-start","type":"mcp_tool_call","server":"files","tool":"read","arguments":{"path":"README.md"},"status":"in_progress"}}`)
+	fmt.Println(`{"type":"item.updated","item":{"id":"mcp-start","type":"mcp_tool_call","server":"files","tool":"read","arguments":{"path":"README.md"},"result":{"content":[],"structured_content":null},"status":"in_progress"}}`)
+	fmt.Println(`{"type":"item.completed","item":{"id":"mcp-success","type":"mcp_tool_call","server":"db","tool":"query","arguments":{"sql":"select 1"},"result":{"content":[{"type":"text","text":"1"}],"_meta":{"trace":"abc"},"structured_content":{"rows":[1]}},"status":"completed"}}`)
+	fmt.Println(`{"type":"item.completed","item":{"id":"mcp-failure","type":"mcp_tool_call","server":"db","tool":"query","arguments":null,"error":{"message":"permission denied"},"status":"failed"}}`)
+	fmt.Println(`{"type":"item.completed","item":{"id":"search-1","type":"web_search","query":"Go 1.27 release notes"}}`)
+	fmt.Println(`{"type":"item.completed","item":{"id":"todo-1","type":"todo_list","items":[{"text":"Inspect","completed":true},{"text":"Implement","completed":false}]}}`)
+	fmt.Println(`{"type":"item.completed","item":{"id":"error-1","type":"error","message":"non-fatal warning"}}`)
+	fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1,"reasoning_output_tokens":0}}`)
 }
 
 func runStructured(scenario string) {

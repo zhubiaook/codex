@@ -99,6 +99,15 @@ func (e *OutputDecodeError) Unwrap() error {
 	return e.Err
 }
 
+// TurnFailedError reports a turn.failed Thread Event.
+type TurnFailedError struct {
+	ThreadError ThreadError
+}
+
+func (e *TurnFailedError) Error() string {
+	return "codex: Turn failed: " + e.ThreadError.Message
+}
+
 func (e *ProtocolError) Error() string {
 	return "codex: invalid event sequence: " + e.Message
 }

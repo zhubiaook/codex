@@ -5,10 +5,8 @@ import (
 	"bytes"
 	"context"
 	stdjson "encoding/json"
-	"encoding/json/jsontext"
 	json "encoding/json/v2"
 	"errors"
-	"fmt"
 	"iter"
 	"os/exec"
 	"reflect"
@@ -176,6 +174,10 @@ func (t *Thread) Run[I TurnInput](ctx context.Context, input I, options TurnOpti
 			}
 		case *TurnCompletedEvent:
 			turn.Usage = new(event.Usage)
+		case *TurnFailedEvent:
+			return Turn{}, &TurnFailedError{ThreadError: event.Error}
+		case *ThreadErrorEvent:
+			return Turn{}, event
 		}
 	}
 	return turn, nil
@@ -335,13 +337,13 @@ func (t *Thread) execute(
 		_ = command.Wait()
 	}()
 
-	completed := false
+	terminal := false
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64<<10), maxEventBytes)
 	line := 0
 	for scanner.Scan() {
 		line++
-		event, err := t.decodeEvent(scanner.Bytes())
+		event, err := decodeThreadEvent(scanner.Bytes())
 		if err != nil {
 			yield(nil, &DecodeError{
 				Line:    line,
@@ -350,8 +352,14 @@ func (t *Thread) execute(
 			})
 			return
 		}
-		if _, ok := event.(*TurnCompletedEvent); ok {
-			completed = true
+		if started, ok := event.(*ThreadStartedEvent); ok {
+			t.mu.Lock()
+			t.id = started.ThreadID
+			t.mu.Unlock()
+		}
+		switch event.(type) {
+		case *TurnCompletedEvent, *TurnFailedEvent, *ThreadErrorEvent:
+			terminal = true
 		}
 		if !yield(event, nil) {
 			return
@@ -381,7 +389,7 @@ func (t *Thread) execute(
 		})
 		return
 	}
-	if !completed {
+	if !terminal {
 		yield(nil, &ProtocolError{Message: "process exited without turn.completed"})
 	}
 }
@@ -399,84 +407,6 @@ func normalizeInput[I TurnInput](input I) normalizedTurnInput {
 func snapshotThreadOptions(options ThreadOptions) ThreadOptions {
 	options.AdditionalDirectories = slices.Clone(options.AdditionalDirectories)
 	return options
-}
-
-type eventHeader struct {
-	Type string `json:"type"`
-}
-
-type threadStartedWireEvent struct {
-	ThreadID string `json:"thread_id"`
-}
-
-type itemCompletedWireEvent struct {
-	Item jsontext.Value `json:"item"`
-}
-
-type itemHeader struct {
-	Type string `json:"type"`
-}
-
-type turnCompletedWireEvent struct {
-	Usage Usage `json:"usage"`
-}
-
-func (t *Thread) decodeEvent(data []byte) (ThreadEvent, error) {
-	var header eventHeader
-	if err := json.Unmarshal(data, &header); err != nil {
-		return nil, err
-	}
-	switch header.Type {
-	case "thread.started":
-		var wire threadStartedWireEvent
-		if err := json.Unmarshal(data, &wire); err != nil {
-			return nil, err
-		}
-		if wire.ThreadID == "" {
-			return nil, errors.New("thread.started event has an empty thread_id")
-		}
-		t.mu.Lock()
-		t.id = wire.ThreadID
-		t.mu.Unlock()
-		return &ThreadStartedEvent{ThreadID: wire.ThreadID}, nil
-	case "turn.started":
-		return &TurnStartedEvent{}, nil
-	case "item.completed":
-		var wire itemCompletedWireEvent
-		if err := json.Unmarshal(data, &wire); err != nil {
-			return nil, err
-		}
-		item, err := decodeCompletedItem(wire.Item)
-		if err != nil {
-			return nil, err
-		}
-		return &ItemCompletedEvent{Item: item}, nil
-	case "turn.completed":
-		var wire turnCompletedWireEvent
-		if err := json.Unmarshal(data, &wire); err != nil {
-			return nil, err
-		}
-		return &TurnCompletedEvent{Usage: wire.Usage}, nil
-	default:
-		return nil, fmt.Errorf("unsupported event type %q", header.Type)
-	}
-}
-
-func decodeCompletedItem(data []byte) (ThreadItem, error) {
-	var header itemHeader
-	if err := json.Unmarshal(data, &header); err != nil {
-		return nil, err
-	}
-	switch header.Type {
-	case "agent_message":
-		var item AgentMessageItem
-		if err := json.Unmarshal(data, &item); err != nil {
-			return nil, err
-		}
-		return &item, nil
-	default:
-		return nil, fmt.Errorf("unsupported item type %q", header.Type)
-	}
 }
 
 func preview(data []byte) string {
