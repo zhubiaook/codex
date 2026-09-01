@@ -142,7 +142,7 @@ func TestProcessErrorDoesNotExposeAPIKey(t *testing.T) {
 		CodexPath: buildFakeCodex(t),
 		APIKey:    secret,
 		Env: map[string]string{
-			"CODEX_FAKE_SCENARIO": "exit",
+			"CODEX_FAKE_SCENARIO": "secret-exit",
 			"EXPECTED_PROMPT":     "fail",
 		},
 	})
@@ -155,5 +155,8 @@ func TestProcessErrorDoesNotExposeAPIKey(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), secret) {
 		t.Errorf("Run() error exposes API key: %v", err)
+	}
+	if !strings.Contains(err.Error(), "[REDACTED]") {
+		t.Errorf("Run() error does not report redaction: %v", err)
 	}
 }

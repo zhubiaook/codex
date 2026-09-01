@@ -35,6 +35,10 @@ func main() {
 		requireArgs("exec", "--experimental-json")
 		fmt.Fprint(os.Stderr, strings.Repeat("failure", 20_000))
 		os.Exit(7)
+	case "secret-exit":
+		requireArgs("exec", "--experimental-json")
+		fmt.Fprintf(os.Stderr, "credential=%s", os.Getenv("CODEX_API_KEY"))
+		os.Exit(7)
 	case "malformed":
 		requireArgs("exec", "--experimental-json")
 		fmt.Println(strings.Repeat("{", 5_000))

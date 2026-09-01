@@ -299,7 +299,11 @@ func buildFakeCodex(t *testing.T) string {
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
-	executable := filepath.Join(t.TempDir(), name)
+	directory := filepath.Join(t.TempDir(), "path with spaces")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatalf("create fake Codex directory: %v", err)
+	}
+	executable := filepath.Join(directory, name)
 	cmd := exec.CommandContext(t.Context(), "go", "build", "-o", executable, "./internal/testcli")
 	cmd.Env = os.Environ()
 	if output, err := cmd.CombinedOutput(); err != nil {

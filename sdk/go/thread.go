@@ -384,7 +384,7 @@ func (t *Thread) execute(
 		yield(nil, &ExecError{
 			Path:     t.client.executable,
 			ExitCode: exitCode,
-			Stderr:   stderr.String(),
+			Stderr:   redactSecret(stderr.String(), t.client.apiKey),
 			Err:      waitErr,
 		})
 		return
@@ -392,6 +392,13 @@ func (t *Thread) execute(
 	if !terminal {
 		yield(nil, &ProtocolError{Message: "process exited without turn.completed"})
 	}
+}
+
+func redactSecret(value string, secret string) string {
+	if secret == "" {
+		return value
+	}
+	return strings.ReplaceAll(value, secret, "[REDACTED]")
 }
 
 func normalizeInput[I TurnInput](input I) normalizedTurnInput {

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strings"
 )
 
 const (
@@ -40,6 +41,7 @@ type Client struct {
 	baseURL         string
 	configOverrides []string
 	environment     []string
+	apiKey          string
 }
 
 // NewClient creates a Client and resolves its Codex CLI executable.
@@ -63,6 +65,7 @@ func NewClient(options ClientOptions) (*Client, error) {
 		baseURL:         options.BaseURL,
 		configOverrides: configOverrides,
 		environment:     snapshotEnvironment(options.Env, options.APIKey),
+		apiKey:          strings.Clone(options.APIKey),
 	}, nil
 }
 
