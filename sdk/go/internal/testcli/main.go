@@ -26,37 +26,36 @@ func main() {
 
 	switch os.Getenv("CODEX_FAKE_SCENARIO") {
 	case "success":
-		requireArgs("exec", "--experimental-json")
+		requireArgs("exec", "--experimental-json", "--skip-git-repo-check")
 		fmt.Println(`{"type":"thread.started","thread_id":"thread-1"}`)
 		fmt.Println(`{"type":"turn.started"}`)
 		fmt.Println(`{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"The test fails in parser.go."}}`)
 		fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":42,"cached_input_tokens":12,"cache_write_input_tokens":3,"output_tokens":8,"reasoning_output_tokens":2}}`)
 	case "exit":
-		requireArgs("exec", "--experimental-json")
+		requireArgs("exec", "--experimental-json", "--skip-git-repo-check")
 		fmt.Fprint(os.Stderr, strings.Repeat("failure", 20_000))
 		os.Exit(7)
 	case "secret-exit":
-		requireArgs("exec", "--experimental-json")
 		fmt.Fprintf(os.Stderr, "credential=%s", os.Getenv("CODEX_API_KEY"))
 		os.Exit(7)
 	case "malformed":
-		requireArgs("exec", "--experimental-json")
+		requireArgs("exec", "--experimental-json", "--skip-git-repo-check")
 		fmt.Println(strings.Repeat("{", 5_000))
 	case "missing-terminal":
-		requireArgs("exec", "--experimental-json")
+		requireArgs("exec", "--experimental-json", "--skip-git-repo-check")
 		fmt.Println(`{"type":"thread.started","thread_id":"thread-1"}`)
 		fmt.Println(`{"type":"turn.started"}`)
 		fmt.Println(`{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"partial"}}`)
 	case "sequence":
 		runSequence(string(prompt))
 	case "resume":
-		requireArgs("exec", "--experimental-json", "resume", "persisted-thread")
+		requireArgs("exec", "--experimental-json", "--skip-git-repo-check", "resume", "persisted-thread")
 		if string(prompt) != "resume" {
 			fail("unexpected resume prompt: %q", prompt)
 		}
 		emitTurn("persisted-thread", "resumed response")
 	case "stream":
-		requireArgs("exec", "--experimental-json")
+		requireArgs("exec", "--experimental-json", "--skip-git-repo-check")
 		if err := os.WriteFile(os.Getenv("CODEX_FAKE_STATE"), []byte("started"), 0o600); err != nil {
 			fail("write stream state: %v", err)
 		}
@@ -66,7 +65,7 @@ func main() {
 	case "early-break":
 		runEarlyBreak(string(prompt))
 	case "cancel":
-		requireArgs("exec", "--experimental-json")
+		requireArgs("exec", "--experimental-json", "--skip-git-repo-check")
 		fmt.Println(`{"type":"thread.started","thread_id":"thread-cancel"}`)
 		time.Sleep(30 * time.Second)
 	case "args":
@@ -102,7 +101,7 @@ func main() {
 }
 
 func runBackpressure() {
-	requireArgs("exec", "--experimental-json")
+	requireArgs("exec", "--experimental-json", "--skip-git-repo-check")
 	statePath := os.Getenv("CODEX_FAKE_STATE")
 	fmt.Println(`{"type":"thread.started","thread_id":"thread-backpressure"}`)
 	if err := os.WriteFile(statePath, []byte("writing"), 0o600); err != nil {
@@ -182,7 +181,7 @@ func runStructured(scenario string) {
 		fail("decode EXPECTED_IMAGES: %v", err)
 	}
 	withoutSchema := append(slices.Clone(args[:schemaIndex]), args[schemaIndex+2:]...)
-	expected := []string{"exec", "--experimental-json"}
+	expected := []string{"exec", "--experimental-json", "--skip-git-repo-check"}
 	if resumeID := os.Getenv("EXPECTED_RESUME_ID"); resumeID != "" {
 		expected = append(expected, "resume", resumeID)
 	}
@@ -223,7 +222,7 @@ func runEarlyBreak(prompt string) {
 	statePath := os.Getenv("CODEX_FAKE_STATE")
 	_, err := os.Stat(statePath)
 	if errors.Is(err, os.ErrNotExist) {
-		requireArgs("exec", "--experimental-json")
+		requireArgs("exec", "--experimental-json", "--skip-git-repo-check")
 		if prompt != "first" {
 			fail("unexpected first early-break prompt: %q", prompt)
 		}
@@ -237,7 +236,7 @@ func runEarlyBreak(prompt string) {
 	if err != nil {
 		fail("read early-break state: %v", err)
 	}
-	requireArgs("exec", "--experimental-json", "resume", "thread-early")
+	requireArgs("exec", "--experimental-json", "--skip-git-repo-check", "resume", "thread-early")
 	if prompt != "second" {
 		fail("unexpected second early-break prompt: %q", prompt)
 	}
@@ -248,7 +247,13 @@ func runSequence(prompt string) {
 	statePath := os.Getenv("CODEX_FAKE_STATE")
 	_, err := os.Stat(statePath)
 	if errors.Is(err, os.ErrNotExist) {
-		requireArgs("exec", "--experimental-json", "--thread-source", "automated_review")
+		requireArgs(
+			"exec",
+			"--experimental-json",
+			"--thread-source",
+			"automated_review",
+			"--skip-git-repo-check",
+		)
 		if prompt != "first" {
 			fail("unexpected first prompt: %q", prompt)
 		}
@@ -261,7 +266,7 @@ func runSequence(prompt string) {
 	if err != nil {
 		fail("read sequence state: %v", err)
 	}
-	requireArgs("exec", "--experimental-json", "resume", "thread-sequence")
+	requireArgs("exec", "--experimental-json", "--skip-git-repo-check", "resume", "thread-sequence")
 	if prompt != "second" {
 		fail("unexpected second prompt: %q", prompt)
 	}

@@ -24,7 +24,8 @@ const (
 
 // ThreadOptions configures a Thread.
 type ThreadOptions struct {
-	// Model selects the model used by this Thread.
+	// Model selects the model used by this Thread. When empty, a configured
+	// ResponsesProvider uses its default model.
 	Model string
 	// ThreadSource classifies a newly created Thread. It is not sent when a
 	// Thread is resumed.
@@ -35,8 +36,9 @@ type ThreadOptions struct {
 	WorkingDirectory string
 	// AdditionalDirectories grants access to additional working directories.
 	AdditionalDirectories []string
-	// SkipGitRepoCheck allows the working directory to be outside a Git repository.
-	SkipGitRepoCheck bool
+	// RequireGitRepository requires the working directory to be inside a trusted
+	// Git repository.
+	RequireGitRepository bool
 	// ModelReasoningEffort selects the model reasoning effort.
 	ModelReasoningEffort ModelReasoningEffort
 	// NetworkAccess controls network access in the workspace-write sandbox.
@@ -266,10 +268,6 @@ func (t *Thread) execute(
 	for _, override := range t.client.configOverrides {
 		args = append(args, "--config", override)
 	}
-	if t.client.baseURL != "" {
-		value, _ := renderTOMLValue(t.client.baseURL, "openai_base_url")
-		args = append(args, "--config", "openai_base_url="+value)
-	}
 	threadID, resumed := t.ID()
 	if t.options.Model != "" {
 		args = append(args, "--model", t.options.Model)
@@ -286,7 +284,7 @@ func (t *Thread) execute(
 	for _, directory := range t.options.AdditionalDirectories {
 		args = append(args, "--add-dir", directory)
 	}
-	if t.options.SkipGitRepoCheck {
+	if !t.options.RequireGitRepository {
 		args = append(args, "--skip-git-repo-check")
 	}
 	if schemaPath != "" {

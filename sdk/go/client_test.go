@@ -27,7 +27,7 @@ func TestClientRunsTextTurn(t *testing.T) {
 		t.Fatalf("NewClient() error = %v", err)
 	}
 
-	thread := client.StartThread(codex.ThreadOptions{})
+	thread := startThread(t, client, codex.ThreadOptions{})
 	got, err := thread.Run(t.Context(), "Diagnose the failing test.", codex.TurnOptions{})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -63,7 +63,7 @@ func TestClientReturnsBoundedProcessError(t *testing.T) {
 		t.Fatalf("NewClient() error = %v", err)
 	}
 
-	_, err = client.StartThread(codex.ThreadOptions{}).Run(
+	_, err = startThread(t, client, codex.ThreadOptions{}).Run(
 		t.Context(),
 		"fail",
 		codex.TurnOptions{},
@@ -95,7 +95,7 @@ func TestClientReturnsDecodeErrorForMalformedJSONL(t *testing.T) {
 		t.Fatalf("NewClient() error = %v", err)
 	}
 
-	_, err = client.StartThread(codex.ThreadOptions{}).Run(
+	_, err = startThread(t, client, codex.ThreadOptions{}).Run(
 		t.Context(),
 		"decode",
 		codex.TurnOptions{},
@@ -123,7 +123,7 @@ func TestClientRejectsMalformedKnownEvent(t *testing.T) {
 		t.Fatalf("NewClient() error = %v", err)
 	}
 
-	_, err = client.StartThread(codex.ThreadOptions{}).Run(
+	_, err = startThread(t, client, codex.ThreadOptions{}).Run(
 		t.Context(),
 		"malformed known event",
 		codex.TurnOptions{},
@@ -149,7 +149,7 @@ func TestClientRejectsMissingTerminalEvent(t *testing.T) {
 		t.Fatalf("NewClient() error = %v", err)
 	}
 
-	_, err = client.StartThread(codex.ThreadOptions{}).Run(
+	_, err = startThread(t, client, codex.ThreadOptions{}).Run(
 		t.Context(),
 		"partial",
 		codex.TurnOptions{},
@@ -190,7 +190,7 @@ func TestClientSnapshotsEnvironment(t *testing.T) {
 	environment["CODEX_FAKE_SCENARIO"] = "exit"
 	environment["EXPECTED_PROMPT"] = "mutated"
 
-	turn, err := client.StartThread(codex.ThreadOptions{}).Run(
+	turn, err := startThread(t, client, codex.ThreadOptions{}).Run(
 		t.Context(),
 		"original",
 		codex.TurnOptions{},
@@ -215,7 +215,7 @@ func TestThreadContinuesWithEstablishedID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
-	thread := client.StartThread(codex.ThreadOptions{ThreadSource: "automated_review"})
+	thread := startThread(t, client, codex.ThreadOptions{ThreadSource: "automated_review"})
 
 	first, err := thread.Run(t.Context(), "first", codex.TurnOptions{})
 	if err != nil {
@@ -294,7 +294,7 @@ func TestThreadIDIsSafeForConcurrentReaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
-	thread := client.StartThread(codex.ThreadOptions{})
+	thread := startThread(t, client, codex.ThreadOptions{})
 
 	unexpectedIDs := make(chan string, 16)
 	var readers sync.WaitGroup
@@ -335,4 +335,13 @@ func buildFakeCodex(t *testing.T) string {
 		t.Fatalf("build fake Codex CLI: %v\n%s", err, output)
 	}
 	return executable
+}
+
+func startThread(t testing.TB, client *codex.Client, options codex.ThreadOptions) *codex.Thread {
+	t.Helper()
+	thread, err := client.StartThread(options)
+	if err != nil {
+		t.Fatalf("StartThread() error = %v", err)
+	}
+	return thread
 }

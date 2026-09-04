@@ -27,7 +27,7 @@ func TestRunStreamedIsLazyAndYieldsThreadEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
-	thread := client.StartThread(codex.ThreadOptions{})
+	thread := startThread(t, client, codex.ThreadOptions{})
 
 	stream := thread.RunStreamed(t.Context(), "stream this", codex.TurnOptions{})
 	if _, err := os.Stat(statePath); !errors.Is(err, os.ErrNotExist) {
@@ -75,7 +75,7 @@ func TestRunStreamedAppliesConsumerBackpressure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
-	stream := client.StartThread(codex.ThreadOptions{}).RunStreamed(
+	stream := startThread(t, client, codex.ThreadOptions{}).RunStreamed(
 		t.Context(),
 		"backpressure",
 		codex.TurnOptions{},
@@ -136,7 +136,7 @@ func TestRunStreamedEarlyBreakCleansUpAndReleasesThread(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
-	thread := client.StartThread(codex.ThreadOptions{})
+	thread := startThread(t, client, codex.ThreadOptions{})
 
 	for event, err := range thread.RunStreamed(
 		t.Context(),
@@ -175,7 +175,7 @@ func TestRunStreamedPreservesContextCancellation(t *testing.T) {
 	defer cancel()
 
 	var streamErr error
-	for event, err := range client.StartThread(codex.ThreadOptions{}).RunStreamed(
+	for event, err := range startThread(t, client, codex.ThreadOptions{}).RunStreamed(
 		ctx,
 		"cancel",
 		codex.TurnOptions{},
@@ -205,7 +205,7 @@ func TestRunStreamedCanOnlyBeConsumedOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
-	stream := client.StartThread(codex.ThreadOptions{}).RunStreamed(
+	stream := startThread(t, client, codex.ThreadOptions{}).RunStreamed(
 		t.Context(),
 		"once",
 		codex.TurnOptions{},
@@ -235,7 +235,7 @@ func TestThreadRejectsConcurrentTurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
-	thread := client.StartThread(codex.ThreadOptions{})
+	thread := startThread(t, client, codex.ThreadOptions{})
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	started := make(chan struct{})
@@ -281,7 +281,7 @@ func TestSeparateThreadsRunConcurrently(t *testing.T) {
 	results := make(chan error, 2)
 	var turns sync.WaitGroup
 	for range 2 {
-		thread := client.StartThread(codex.ThreadOptions{})
+		thread := startThread(t, client, codex.ThreadOptions{})
 		turns.Go(func() {
 			_, err := thread.Run(t.Context(), "parallel", codex.TurnOptions{})
 			results <- err
@@ -310,7 +310,7 @@ func TestRunStreamedPreservesContextDeadline(t *testing.T) {
 	defer cancel()
 
 	var streamErr error
-	for _, err := range client.StartThread(codex.ThreadOptions{}).RunStreamed(
+	for _, err := range startThread(t, client, codex.ThreadOptions{}).RunStreamed(
 		ctx,
 		"deadline",
 		codex.TurnOptions{},
@@ -336,7 +336,7 @@ func TestThreadIsReleasedAfterTerminalErrors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewClient() error = %v", err)
 			}
-			thread := client.StartThread(codex.ThreadOptions{})
+			thread := startThread(t, client, codex.ThreadOptions{})
 			if _, err := thread.Run(t.Context(), "first", codex.TurnOptions{}); err == nil {
 				t.Fatal("first Run() error = nil")
 			}

@@ -2,6 +2,7 @@ package codex_test
 
 import (
 	jsonv2 "encoding/json/v2"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,133 @@ import (
 )
 
 func TestRepositoryCodexIntegration(t *testing.T) {
+	executable := repositoryCodexExecutable(t)
+
+	tests := []struct {
+		name           string
+		authentication codex.ProviderAuthentication
+		threadModel    string
+		expectedModel  string
+		expectedAuth   string
+	}{
+		{
+			name:           "bearer token with provider default model",
+			authentication: codex.BearerToken("integration-test-key"),
+			expectedModel:  "provider-default-model",
+			expectedAuth:   "Bearer integration-test-key",
+		},
+		{
+			name:           "no authentication with thread model override",
+			authentication: codex.NoAuthentication(),
+			threadModel:    "thread-model",
+			expectedModel:  "thread-model",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			requests := make(chan capturedResponsesRequest, 1)
+			mux := http.NewServeMux()
+			mux.HandleFunc("POST /responses", func(response http.ResponseWriter, request *http.Request) {
+				body, err := io.ReadAll(io.LimitReader(request.Body, 1<<20))
+				if err != nil {
+					http.Error(response, err.Error(), http.StatusBadRequest)
+					return
+				}
+				requests <- capturedResponsesRequest{
+					body:          body,
+					authorization: request.Header.Get("Authorization"),
+				}
+				response.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(response, repositoryIntegrationSSE)
+			})
+			server := httptest.NewServer(mux)
+			defer server.Close()
+
+			environment := currentEnvironment()
+			environment["CODEX_HOME"] = t.TempDir()
+			client, err := codex.NewClient(codex.ClientOptions{
+				CodexPath: executable,
+				Provider: &codex.ResponsesProvider{
+					BaseURL:        server.URL,
+					Model:          "provider-default-model",
+					Authentication: test.authentication,
+					Name:           "Go SDK integration test",
+				},
+				Experimental: &codex.ExperimentalClientOptions{
+					ConfigOverrides: []string{"features.plugins=false"},
+				},
+				Env: environment,
+			})
+			if err != nil {
+				t.Fatalf("NewClient() error = %v", err)
+			}
+
+			turn, err := startThread(t, client, codex.ThreadOptions{
+				Model:            test.threadModel,
+				WorkingDirectory: t.TempDir(),
+				SandboxMode:      codex.SandboxReadOnly,
+				ApprovalPolicy:   codex.ApprovalNever,
+			}).Run(t.Context(), "Reply with the integration fixture.", codex.TurnOptions{})
+			if err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if turn.FinalResponse != "Go SDK integration passed." {
+				t.Errorf("Turn.FinalResponse = %q", turn.FinalResponse)
+			}
+
+			captured := <-requests
+			if captured.authorization != test.expectedAuth {
+				t.Errorf("Authorization = %q, want %q", captured.authorization, test.expectedAuth)
+			}
+			var request responsesRequest
+			if err := jsonv2.Unmarshal(captured.body, &request); err != nil {
+				t.Fatalf("decode Responses API request: %v", err)
+			}
+			if request.Model != test.expectedModel {
+				t.Errorf("Responses API model = %q, want %q", request.Model, test.expectedModel)
+			}
+			if !requestContainsText(request, "Reply with the integration fixture.") {
+				t.Errorf("Responses API request does not contain the Turn input: %#v", request)
+			}
+		})
+	}
+}
+
+func TestRepositoryCodexIntegrationRequiresGitRepository(t *testing.T) {
+	executable := repositoryCodexExecutable(t)
+	environment := currentEnvironment()
+	environment["CODEX_HOME"] = t.TempDir()
+	client, err := codex.NewClient(codex.ClientOptions{
+		CodexPath: executable,
+		Provider: &codex.ResponsesProvider{
+			BaseURL:        "http://127.0.0.1:1",
+			Model:          "provider-model",
+			Authentication: codex.NoAuthentication(),
+		},
+		Experimental: &codex.ExperimentalClientOptions{
+			ConfigOverrides: []string{"features.plugins=false"},
+		},
+		Env: environment,
+	})
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	thread := startThread(t, client, codex.ThreadOptions{
+		WorkingDirectory:     t.TempDir(),
+		RequireGitRepository: true,
+	})
+	_, err = thread.Run(t.Context(), "This Turn must not start.", codex.TurnOptions{})
+	execError, ok := errors.AsType[*codex.ExecError](err)
+	if !ok {
+		t.Fatalf("Run() error = %T %v, want *codex.ExecError", err, err)
+	}
+	if !strings.Contains(execError.Stderr, "Not inside a trusted directory") {
+		t.Errorf("ExecError.Stderr = %q, want repository trust error", execError.Stderr)
+	}
+}
+
+func repositoryCodexExecutable(t *testing.T) string {
+	t.Helper()
 	if runtime.GOOS != "linux" {
 		t.Skip("the repository Codex integration test runs in Linux CI")
 	}
@@ -21,70 +149,16 @@ func TestRepositoryCodexIntegration(t *testing.T) {
 	if executable == "" {
 		t.Skip("CODEX_EXEC_PATH is not set")
 	}
+	return executable
+}
 
-	requests := make(chan []byte, 1)
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /responses", func(response http.ResponseWriter, request *http.Request) {
-		body, err := io.ReadAll(io.LimitReader(request.Body, 1<<20))
-		if err != nil {
-			http.Error(response, err.Error(), http.StatusBadRequest)
-			return
-		}
-		requests <- body
-		response.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(response, repositoryIntegrationSSE)
-	})
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	environment := currentEnvironment()
-	environment["CODEX_HOME"] = t.TempDir()
-	client, err := codex.NewClient(codex.ClientOptions{
-		CodexPath: executable,
-		APIKey:    "integration-test-key",
-		Env:       environment,
-		Config: map[string]any{
-			"model_provider": "go_sdk_mock",
-			"model_providers": map[string]any{
-				"go_sdk_mock": map[string]any{
-					"name":                "Go SDK integration test",
-					"base_url":            server.URL,
-					"env_key":             "CODEX_API_KEY",
-					"wire_api":            "responses",
-					"supports_websockets": false,
-				},
-			},
-			"features": map[string]any{"plugins": false},
-		},
-	})
-	if err != nil {
-		t.Fatalf("NewClient() error = %v", err)
-	}
-
-	turn, err := client.StartThread(codex.ThreadOptions{
-		Model:            "gpt-5.1",
-		WorkingDirectory: t.TempDir(),
-		SkipGitRepoCheck: true,
-		SandboxMode:      codex.SandboxReadOnly,
-		ApprovalPolicy:   codex.ApprovalNever,
-	}).Run(t.Context(), "Reply with the integration fixture.", codex.TurnOptions{})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if turn.FinalResponse != "Go SDK integration passed." {
-		t.Errorf("Turn.FinalResponse = %q", turn.FinalResponse)
-	}
-
-	var request responsesRequest
-	if err := jsonv2.Unmarshal(<-requests, &request); err != nil {
-		t.Fatalf("decode Responses API request: %v", err)
-	}
-	if !requestContainsText(request, "Reply with the integration fixture.") {
-		t.Errorf("Responses API request does not contain the Turn input: %#v", request)
-	}
+type capturedResponsesRequest struct {
+	body          []byte
+	authorization string
 }
 
 type responsesRequest struct {
+	Model string `json:"model"`
 	Input []struct {
 		Role    string `json:"role"`
 		Content []struct {

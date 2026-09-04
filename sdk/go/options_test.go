@@ -2,8 +2,6 @@ package codex_test
 
 import (
 	json "encoding/json/v2"
-	"errors"
-	"math"
 	"strings"
 	"testing"
 
@@ -24,8 +22,6 @@ func TestClientAppliesExecutionOptionsInPrecedenceOrder(t *testing.T) {
 		"show_raw_agent_reasoning=true",
 		"--config",
 		`permissions.audit.filesystem={":root"="read"}`,
-		"--config",
-		`openai_base_url="https://codex.example.test/v1"`,
 		"--model",
 		"gpt-test",
 		"--thread-source",
@@ -52,18 +48,13 @@ func TestClientAppliesExecutionOptionsInPrecedenceOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal expected arguments: %v", err)
 	}
-	config := map[string]any{
-		"features": map[string]any{},
-		"list": []any{
-			"alpha",
-			int64(2),
-			true,
-			map[string]any{"quoted.key": "value"},
-		},
-		"nested":                   map[string]any{"count": 3},
-		"show_raw_agent_reasoning": true,
+	rawOverrides := []string{
+		"features={}",
+		`list=["alpha", 2, true, {"quoted.key" = "value"}]`,
+		"nested.count=3",
+		"show_raw_agent_reasoning=true",
+		`permissions.audit.filesystem={":root"="read"}`,
 	}
-	rawOverrides := []string{`permissions.audit.filesystem={":root"="read"}`}
 	environment := map[string]string{
 		"CODEX_FAKE_SCENARIO": "args",
 		"EXPECTED_ARGS":       string(expectedArgsJSON),
@@ -73,66 +64,36 @@ func TestClientAppliesExecutionOptionsInPrecedenceOrder(t *testing.T) {
 	}
 	t.Setenv("HOST_ONLY_FOR_CODEX_TEST", "must-not-leak")
 	client, err := codex.NewClient(codex.ClientOptions{
-		CodexPath:       buildFakeCodex(t),
-		BaseURL:         "https://codex.example.test/v1",
-		APIKey:          "sdk-secret",
-		Config:          config,
-		ConfigOverrides: rawOverrides,
-		Env:             environment,
+		CodexPath: buildFakeCodex(t),
+		APIKey:    "sdk-secret",
+		Experimental: &codex.ExperimentalClientOptions{
+			ConfigOverrides: rawOverrides,
+		},
+		Env: environment,
 	})
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
-	config["show_raw_agent_reasoning"] = false
 	rawOverrides[0] = "mutated=true"
 	environment["EXPECTED_API_KEY"] = "mutated"
 
 	additionalDirectories := []string{"/shared/one", "/shared/two"}
-	thread := client.StartThread(codex.ThreadOptions{
+	thread := startThread(t, client, codex.ThreadOptions{
 		Model:                 "gpt-test",
 		ThreadSource:          "automated_review",
 		SandboxMode:           codex.SandboxWorkspaceWrite,
 		WorkingDirectory:      "/workspace",
 		AdditionalDirectories: additionalDirectories,
-		SkipGitRepoCheck:      true,
 		ModelReasoningEffort:  codex.ReasoningEffortHigh,
 		NetworkAccess:         codex.NetworkAccessEnabled,
 		WebSearchMode:         codex.WebSearchCached,
 		ApprovalPolicy:        codex.ApprovalOnRequest,
 	})
+
 	additionalDirectories[0] = "/mutated"
 
 	if _, err := thread.Run(t.Context(), "configured", codex.TurnOptions{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
-	}
-}
-
-func TestNewClientReportsConfigValidationPath(t *testing.T) {
-	tests := []struct {
-		name  string
-		value any
-		field string
-	}{
-		{name: "nil", value: nil, field: "nested.value"},
-		{name: "non-finite", value: math.Inf(1), field: "nested.value"},
-		{name: "unsupported", value: make(chan int), field: "nested.value"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			_, err := codex.NewClient(codex.ClientOptions{
-				CodexPath: buildFakeCodex(t),
-				Config: map[string]any{
-					"nested": map[string]any{"value": test.value},
-				},
-			})
-			validationError, ok := errors.AsType[*codex.ValidationError](err)
-			if !ok {
-				t.Fatalf("NewClient() error = %T %v, want *codex.ValidationError", err, err)
-			}
-			if validationError.Field != test.field {
-				t.Errorf("ValidationError.Field = %q, want %q", validationError.Field, test.field)
-			}
-		})
 	}
 }
 
@@ -149,7 +110,7 @@ func TestProcessErrorDoesNotExposeAPIKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
-	_, err = client.StartThread(codex.ThreadOptions{}).Run(t.Context(), "fail", codex.TurnOptions{})
+	_, err = startThread(t, client, codex.ThreadOptions{}).Run(t.Context(), "fail", codex.TurnOptions{})
 	if err == nil {
 		t.Fatal("Run() error = nil, want process error")
 	}

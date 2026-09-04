@@ -12,7 +12,7 @@ import (
 func TestThreadDecodesAgentActivityAndUnknownVariants(t *testing.T) {
 	client := newActivityClient(t, "activity")
 	var got []codex.ThreadEvent
-	for event, err := range client.StartThread(codex.ThreadOptions{}).RunStreamed(
+	for event, err := range startThread(t, client, codex.ThreadOptions{}).RunStreamed(
 		t.Context(), "activity", codex.TurnOptions{},
 	) {
 		if err != nil {
@@ -59,7 +59,7 @@ func TestThreadDecodesAgentActivityAndUnknownVariants(t *testing.T) {
 		t.Errorf("Thread Events = %#v, want %#v", got, want)
 	}
 
-	buffered := newActivityClient(t, "activity").StartThread(codex.ThreadOptions{})
+	buffered := startThread(t, newActivityClient(t, "activity"), codex.ThreadOptions{})
 	turn, err := buffered.Run(t.Context(), "activity", codex.TurnOptions{})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -80,7 +80,7 @@ func TestThreadDecodesAgentActivityAndUnknownVariants(t *testing.T) {
 }
 
 func TestThreadDecodesDeclinedCommand(t *testing.T) {
-	turn, err := newActivityClient(t, "command-declined").StartThread(codex.ThreadOptions{}).Run(
+	turn, err := startThread(t, newActivityClient(t, "command-declined"), codex.ThreadOptions{}).Run(
 		t.Context(), "activity", codex.TurnOptions{},
 	)
 	if err != nil {
@@ -95,7 +95,7 @@ func TestThreadDecodesDeclinedCommand(t *testing.T) {
 }
 
 func TestThreadDecodesFileChangeInProgress(t *testing.T) {
-	turn, err := newActivityClient(t, "file-change-in-progress").StartThread(codex.ThreadOptions{}).Run(
+	turn, err := startThread(t, newActivityClient(t, "file-change-in-progress"), codex.ThreadOptions{}).Run(
 		t.Context(), "activity", codex.TurnOptions{},
 	)
 	if err != nil {
@@ -115,7 +115,7 @@ func TestThreadDecodesFileChangeInProgress(t *testing.T) {
 
 func TestKnownMalformedActivityIsNotDowngradedToUnknown(t *testing.T) {
 	client := newActivityClient(t, "malformed-known")
-	_, err := client.StartThread(codex.ThreadOptions{}).Run(t.Context(), "activity", codex.TurnOptions{})
+	_, err := startThread(t, client, codex.ThreadOptions{}).Run(t.Context(), "activity", codex.TurnOptions{})
 	if _, ok := errors.AsType[*codex.DecodeError](err); !ok {
 		t.Fatalf("Run() error = %T %v, want *codex.DecodeError", err, err)
 	}
@@ -123,14 +123,14 @@ func TestKnownMalformedActivityIsNotDowngradedToUnknown(t *testing.T) {
 
 func TestTurnAndThreadFailuresAreTyped(t *testing.T) {
 	turnClient := newActivityClient(t, "turn-failed")
-	_, err := turnClient.StartThread(codex.ThreadOptions{}).Run(t.Context(), "activity", codex.TurnOptions{})
+	_, err := startThread(t, turnClient, codex.ThreadOptions{}).Run(t.Context(), "activity", codex.TurnOptions{})
 	turnError, ok := errors.AsType[*codex.TurnFailedError](err)
 	if !ok || turnError.ThreadError.Message != "model failed" {
 		t.Fatalf("Run() error = %T %v, want model TurnFailedError", err, err)
 	}
 
 	streamClient := newActivityClient(t, "thread-error")
-	_, err = streamClient.StartThread(codex.ThreadOptions{}).Run(t.Context(), "activity", codex.TurnOptions{})
+	_, err = startThread(t, streamClient, codex.ThreadOptions{}).Run(t.Context(), "activity", codex.TurnOptions{})
 	streamError, ok := errors.AsType[*codex.ThreadErrorEvent](err)
 	if !ok || streamError.Message != "stream failed" {
 		t.Fatalf("Run() error = %T %v, want ThreadErrorEvent", err, err)

@@ -4,6 +4,8 @@
 // Turns and exposes either a buffered Turn result or a lazy stream of typed
 // Thread Events. Completed Thread Items describe agent messages, reasoning,
 // command execution, file changes, MCP calls, web searches, plans, and errors.
+// Clients can use the built-in OpenAI provider or one typed Responses-compatible
+// Provider.
 //
 // The package runs an installed Codex CLI for each Turn. It owns JSONL decoding,
 // process cleanup, output-schema files, configuration precedence, and Thread

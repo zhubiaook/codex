@@ -19,3 +19,15 @@ _Avoid_: Message, event
 **Thread Event**:
 A lifecycle notification emitted while a turn runs. An event may describe a thread or turn transition, or carry a thread item.
 _Avoid_: Callback, message
+
+**Responses-compatible Provider**:
+A model service that implements the OpenAI Responses API contract required by a Codex SDK, including streamed responses.
+_Avoid_: Third-party LLM, custom LLM
+
+**Built-in OpenAI Provider**:
+The default model service selected when an SDK Client does not specify a Responses-compatible Provider.
+_Avoid_: Default provider, inferred provider
+
+**Provider Default Model**:
+The model a Responses-compatible Provider uses when a Thread does not select an override.
+_Avoid_: Client model, fallback model

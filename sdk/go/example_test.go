@@ -13,7 +13,10 @@ func Example() {
 	if err != nil {
 		return
 	}
-	thread := client.StartThread(codex.ThreadOptions{})
+	thread, err := client.StartThread(codex.ThreadOptions{})
+	if err != nil {
+		return
+	}
 	turn, err := thread.Run(context.Background(), "Summarize this repository.", codex.TurnOptions{})
 	if err != nil {
 		return
@@ -26,7 +29,10 @@ func ExampleThread_RunStreamed() {
 	if err != nil {
 		return
 	}
-	thread := client.StartThread(codex.ThreadOptions{})
+	thread, err := client.StartThread(codex.ThreadOptions{})
+	if err != nil {
+		return
+	}
 	for event, err := range thread.RunStreamed(
 		context.Background(), "Run the tests.", codex.TurnOptions{},
 	) {
@@ -56,7 +62,11 @@ func ExampleThread_RunJSON() {
 	if err != nil {
 		return
 	}
-	result, err := client.StartThread(codex.ThreadOptions{}).RunJSON[Summary](
+	thread, err := client.StartThread(codex.ThreadOptions{})
+	if err != nil {
+		return
+	}
+	result, err := thread.RunJSON[Summary](
 		context.Background(),
 		codex.StructuredInput{
 			Text:        "Describe this screenshot.",

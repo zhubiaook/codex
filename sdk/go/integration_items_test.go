@@ -11,7 +11,7 @@ import (
 func TestThreadDecodesIntegrationAndPlanningItems(t *testing.T) {
 	client := newActivityClient(t, "integration-items")
 	var activity []codex.ThreadItem
-	for event, err := range client.StartThread(codex.ThreadOptions{}).RunStreamed(
+	for event, err := range startThread(t, client, codex.ThreadOptions{}).RunStreamed(
 		t.Context(), "activity", codex.TurnOptions{},
 	) {
 		if err != nil {
@@ -59,7 +59,7 @@ func TestThreadDecodesIntegrationAndPlanningItems(t *testing.T) {
 		t.Errorf("integration activity = %#v, want %#v", activity, want)
 	}
 
-	turn, err := newActivityClient(t, "integration-items").StartThread(codex.ThreadOptions{}).Run(
+	turn, err := startThread(t, newActivityClient(t, "integration-items"), codex.ThreadOptions{}).Run(
 		t.Context(), "activity", codex.TurnOptions{},
 	)
 	if err != nil {

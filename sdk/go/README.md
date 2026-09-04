@@ -4,7 +4,8 @@ Use Codex from Go applications and automation. The SDK starts an installed
 `codex` CLI process, sends each Turn through standard input, and decodes the
 CLI's JSONL output into typed Thread Events and Thread Items.
 
-The SDK supports the OpenAI API and third-party providers that implement the
+The SDK supports the Built-in OpenAI Provider and Responses-compatible Providers
+that implement the
 OpenAI **Responses API**. Chat Completions-only endpoints are not compatible.
 
 ## Requirements
@@ -65,9 +66,12 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	thread := client.StartThread(codex.ThreadOptions{
+	thread, err := client.StartThread(codex.ThreadOptions{
 		WorkingDirectory: ".",
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 	turn, err := thread.Run(ctx, "Summarize this repository.", codex.TurnOptions{})
 	if err != nil {
 		log.Fatal(err)
@@ -76,21 +80,21 @@ func main() {
 }
 ```
 
-Run it from a Git repository:
+Run it from any working directory:
 
 ```console
 go run .
 ```
 
-Codex normally requires the working directory to be a Git repository. Set
-`SkipGitRepoCheck: true` only when the application intentionally operates in a
-non-repository directory.
+The Go SDK permits non-Git working directories by default. Set
+`RequireGitRepository: true` when the application requires the CLI repository
+trust check.
 
 `NewClient` resolves `codex` when the Client is created. To use a specific
 binary, set `CodexPath` to its absolute path, such as
 `/opt/codex/bin/codex`.
 
-## Configure a third-party LLM
+## Configure a Responses-compatible Provider
 
 The provider must implement the OpenAI Responses API, including streamed
 Responses events. A base URL identifies the API root immediately before the
@@ -107,9 +111,10 @@ set -a
 set +a
 ```
 
-The following complete program accepts any Responses-compatible provider
-through `LLM_API_KEY`, `LLM_BASE_URL`, and `LLM_MODEL`. It also tolerates a
-`LLM_BASE_URL` that already ends in `/responses` by removing that final route.
+The following complete program accepts any Responses-compatible Provider
+through `LLM_API_KEY`, `LLM_BASE_URL`, and `LLM_MODEL`. The SDK validates these
+values when it constructs the Client. `LLM_BASE_URL` must not include the final
+`/responses` route.
 
 ```go
 package main
@@ -126,24 +131,11 @@ import (
 )
 
 func main() {
-	apiKey := requiredEnv("LLM_API_KEY")
-	baseURL := responsesBaseURL(requiredEnv("LLM_BASE_URL"))
-	model := requiredEnv("LLM_MODEL")
-
-	const providerID = "third_party"
 	client, err := codex.NewClient(codex.ClientOptions{
-		APIKey: apiKey,
-		Config: map[string]any{
-			"model_provider": providerID,
-			"model_providers": map[string]any{
-				providerID: map[string]any{
-					"name":                "Third-party Responses API",
-					"base_url":            baseURL,
-					"env_key":             "CODEX_API_KEY",
-					"wire_api":            "responses",
-					"supports_websockets": false,
-				},
-			},
+		Provider: &codex.ResponsesProvider{
+			BaseURL:        requiredEnv("LLM_BASE_URL"),
+			Model:          requiredEnv("LLM_MODEL"),
+			Authentication: codex.BearerToken(requiredEnv("LLM_API_KEY")),
 		},
 	})
 	if err != nil {
@@ -153,13 +145,10 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	thread := client.StartThread(codex.ThreadOptions{
-		Model:            model,
-		WorkingDirectory: ".",
-		SandboxMode:      codex.SandboxReadOnly,
-		WebSearchMode:    codex.WebSearchDisabled,
-		ApprovalPolicy:   codex.ApprovalNever,
-	})
+	thread, err := client.StartThread(codex.ThreadOptions{})
+	if err != nil {
+		log.Fatal(err)
+	}
 	turn, err := thread.Run(ctx, "Reply with: provider connected", codex.TurnOptions{})
 	if err != nil {
 		log.Fatal(err)
@@ -168,21 +157,16 @@ func main() {
 }
 
 func requiredEnv(name string) string {
-	value := strings.TrimSpace(os.Getenv(name))
+	value := os.Getenv(name)
 	if value == "" {
 		log.Fatalf("%s is not set", name)
+	}
+	if strings.TrimSpace(value) != value {
+		log.Fatalf("%s contains surrounding whitespace", name)
 	}
 	return value
 }
 
-func responsesBaseURL(value string) string {
-	value = strings.TrimRight(strings.TrimSpace(value), "/")
-	value, _ = strings.CutSuffix(value, "/responses")
-	if value == "" {
-		log.Fatal("LLM_BASE_URL does not contain an API base URL")
-	}
-	return value
-}
 ```
 
 For a `.env` file that uses provider-specific names, map them when starting the
@@ -198,20 +182,36 @@ LLM_MODEL="$DASHSCOPE_MODEL" \
 go run .
 ```
 
-Why the custom provider configuration matters:
+Why the typed Provider configuration matters:
 
-- `APIKey` is injected into the child process as `CODEX_API_KEY`; `env_key`
-  tells the provider which variable to read.
-- `wire_api: "responses"` selects the Responses protocol explicitly.
-- `supports_websockets: false` prevents retries against providers that only
-  support HTTP streaming.
-- `Model` is set per Thread, so the same Client configuration can create
-  Threads with different models supported by the provider.
+- `BearerToken` associates the credential with this Provider and keeps it out
+  of generated CLI arguments.
+- HTTP/SSE and the Responses protocol are defaults, so HTTP-only services need
+  no transport flags.
+- `Model` is the Provider Default Model. A Thread can still select an override.
+- Internal provider names, IDs, and environment wiring are generated by the SDK.
 
-`ClientOptions.BaseURL` is a shorter way to override the built-in OpenAI
-provider's base URL. Prefer an explicit `model_provider` definition for a
-third-party service because transport and authentication behavior are then
-unambiguous.
+Use `codex.NoAuthentication()` instead of `BearerToken` for a service that
+explicitly accepts unauthenticated requests. Set `SupportsWebSockets: true`
+only when the Provider supports that transport.
+
+### Migrate from untyped provider configuration
+
+This pre-stable API replaces the earlier untyped configuration surface:
+
+| Earlier API | Replacement |
+| --- | --- |
+| `ClientOptions.BaseURL` | `ResponsesProvider.BaseURL` |
+| `ClientOptions.APIKey` for a non-OpenAI service | `ResponsesProvider.Authentication: codex.BearerToken(key)` |
+| `ClientOptions.Config` provider maps | `ClientOptions.Provider` |
+| `ClientOptions.ConfigOverrides` | `ClientOptions.Experimental.ConfigOverrides` |
+| `thread := client.StartThread(options)` | `thread, err := client.StartThread(options)` |
+| `SkipGitRepoCheck: true` | No option; non-Git directories are allowed by default |
+| `SkipGitRepoCheck: false` | `RequireGitRepository: true` |
+
+Do not copy `model_provider`, `model_providers`, `env_key`, `wire_api`, or
+`supports_websockets` into experimental overrides. The SDK owns these values
+for a typed Provider and rejects conflicting overrides.
 
 ## Continue and resume Threads
 
@@ -244,7 +244,10 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	thread := client.StartThread(codex.ThreadOptions{WorkingDirectory: "."})
+	thread, err := client.StartThread(codex.ThreadOptions{WorkingDirectory: "."})
+	if err != nil {
+		log.Fatal(err)
+	}
 	first, err := thread.Run(ctx, "Find the most important package in this repository.", codex.TurnOptions{})
 	if err != nil {
 		log.Fatal(err)
@@ -303,7 +306,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	thread := client.StartThread(codex.ThreadOptions{WorkingDirectory: "."})
+	thread, err := client.StartThread(codex.ThreadOptions{WorkingDirectory: "."})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -378,7 +384,11 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	turn, err := client.StartThread(codex.ThreadOptions{WorkingDirectory: "."}).Run(
+	thread, err := client.StartThread(codex.ThreadOptions{WorkingDirectory: "."})
+	if err != nil {
+		log.Fatal(err)
+	}
+	turn, err := thread.Run(
 		ctx,
 		codex.StructuredInput{
 			Text:        "Describe this image.",
@@ -446,7 +456,11 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	result, err := client.StartThread(codex.ThreadOptions{WorkingDirectory: "."}).RunJSON[summary](
+	thread, err := client.StartThread(codex.ThreadOptions{WorkingDirectory: "."})
+	if err != nil {
+		log.Fatal(err)
+	}
+	result, err := thread.RunJSON[summary](
 		ctx,
 		"Summarize the repository status. Return only the requested JSON object without Markdown fences.",
 		schema,
@@ -471,11 +485,20 @@ target type mismatches, and fields not represented by the destination type.
 | Field | Purpose |
 | --- | --- |
 | `CodexPath` | Explicit path to the Codex CLI; otherwise resolve `codex` from `PATH`. |
-| `BaseURL` | Override the built-in OpenAI provider's API base URL. Do not include the final `/responses`. |
-| `APIKey` | Inject an API key into the CLI as `CODEX_API_KEY`. |
-| `Config` | Structured, recursively validated Codex configuration rendered as TOML-compatible overrides. |
-| `ConfigOverrides` | Ordered raw `key=value` CLI overrides. |
+| `APIKey` | Authenticate the Built-in OpenAI Provider. It conflicts with `Provider`. |
+| `Provider` | Configure one Responses-compatible Provider; `nil` selects the Built-in OpenAI Provider. |
+| `Experimental` | Access unmodeled raw CLI overrides without compatibility guarantees. |
 | `Env` | Exact base environment for the child process; `nil` snapshots the host environment. |
+
+### Responses-compatible Provider options
+
+| Field | Purpose |
+| --- | --- |
+| `BaseURL` | Absolute HTTP(S) API root immediately before the final `/responses` route. |
+| `Model` | Provider Default Model used when a Thread does not override it. |
+| `Authentication` | A value returned by `BearerToken` or `NoAuthentication`. |
+| `Name` | Optional diagnostic name; defaults to the base URL host. |
+| `SupportsWebSockets` | Advertise WebSocket support; false uses the default HTTP/SSE transport. |
 
 ### Thread options
 
@@ -486,24 +509,27 @@ target type mismatches, and fields not represented by the destination type.
 | `SandboxMode` | `SandboxReadOnly`, `SandboxWorkspaceWrite`, or `SandboxDangerFullAccess`. |
 | `WorkingDirectory` | Working directory visible to the agent. |
 | `AdditionalDirectories` | Additional directories granted to the agent. |
-| `SkipGitRepoCheck` | Permit a working directory that is not a Git repository. |
+| `RequireGitRepository` | Require the working directory to pass the CLI repository trust check. |
 | `ModelReasoningEffort` | Requested reasoning effort, when supported by the model. |
 | `NetworkAccess` | Explicitly enable or disable workspace network access. |
 | `WebSearchMode` | Disable, cache, or enable live web search. |
 | `ApprovalPolicy` | Control when Codex requests approval. |
 
-Configuration overrides are applied in this order, with later values taking
-precedence:
+Configuration is emitted in this order:
 
-1. Flattened structured `Config`
-2. Ordered raw `ConfigOverrides`
-3. SDK-managed settings such as `BaseURL`
-4. Thread-specific settings
+1. SDK-managed typed Provider settings
+2. Ordered non-conflicting `Experimental.ConfigOverrides`
+3. Thread-specific settings
+
+Experimental overrides cannot target Provider selection, model, endpoint,
+authentication, or transport fields managed by the SDK. Such conflicts return
+a `ValidationError` from `NewClient`.
 
 `ClientOptions.Env == nil` snapshots the process environment when the Client is
 created. A non-nil map, including an empty map, replaces the inherited
-environment before SDK-managed variables are injected. Client options and
-Thread slices are snapshotted, so later caller mutation cannot change execution.
+environment before SDK-managed variables are injected. Client options,
+Provider values, experimental overrides, and Thread slices are snapshotted, so
+later caller mutation cannot change execution.
 
 ## Cancellation and errors
 
@@ -528,8 +554,16 @@ Use `errors.As` or Go 1.27's `errors.AsType` for:
 - `TurnFailedError`: a `turn.failed` event
 - `OutputDecodeError`: structured output could not be decoded into the target type
 
+`ValidationError.Field` is a stable public path. Client and Provider validation
+use `apiKey`, `provider.baseURL`, `provider.model`, `provider.name`,
+`provider.authentication`, `provider.authentication.bearerToken`, and
+`experimental.configOverrides[n]`. Thread validation uses `model`,
+`threadSource`, `workingDirectory`, `additionalDirectories[n]`, `sandboxMode`,
+`modelReasoningEffort`, `networkAccess`, `webSearchMode`, and `approvalPolicy`.
+Thread resumption also uses `id`.
+
 Captured stderr and protocol previews are bounded. An API key supplied through
-`ClientOptions.APIKey` is redacted from captured stderr.
+`ClientOptions.APIKey` or `BearerToken` is redacted from captured stderr.
 
 ## Testing applications that use the SDK
 
@@ -538,16 +572,18 @@ application-owned interface around the operation your application needs, then
 replace that adapter in application tests. This keeps tests independent of CLI
 processes, JSONL, and temporary schema files.
 
-## Troubleshooting third-party providers
+## Troubleshooting Responses-compatible Providers
 
 ### The request path ends in `/responses/responses`
 
 The configured base URL already includes the final route. Remove the trailing
 `/responses`; the provider appends it when sending a request.
 
-### WebSocket connections retry before HTTP succeeds
+### Enable WebSocket transport
 
-Set `supports_websockets` to `false` in the custom provider configuration.
+Responses-compatible Providers use HTTP/SSE by default. Set
+`SupportsWebSockets: true` only when the service implements the compatible
+WebSocket transport.
 
 ### The provider returns 404 or 405
 

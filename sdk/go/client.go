@@ -2,6 +2,7 @@ package codex
 
 import (
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"os/exec"
@@ -20,16 +21,14 @@ type ClientOptions struct {
 	// CodexPath is the path to the Codex CLI executable. When empty, NewClient
 	// resolves codex from PATH.
 	CodexPath string
-	// BaseURL overrides the OpenAI API base URL used by the Codex CLI.
-	BaseURL string
-	// APIKey is provided to the Codex CLI through CODEX_API_KEY.
+	// APIKey is provided to the built-in OpenAI provider through CODEX_API_KEY.
 	APIKey string
-	// Config contains structured Codex configuration. NewClient recursively
-	// validates and snapshots TOML-compatible values.
-	Config map[string]any
-	// ConfigOverrides contains ordered raw key=value overrides passed after
-	// structured Config values.
-	ConfigOverrides []string
+	// Provider configures a Responses-compatible Provider. When nil, the built-in
+	// OpenAI provider is used.
+	Provider *ResponsesProvider
+	// Experimental contains unmodeled Codex CLI configuration without
+	// compatibility guarantees.
+	Experimental *ExperimentalClientOptions
 	// Env is the exact environment passed to the Codex CLI. A nil map snapshots
 	// the current process environment when the Client is created.
 	Env map[string]string
@@ -38,14 +37,45 @@ type ClientOptions struct {
 // Client starts and resumes Codex Threads. A Client is safe for concurrent use.
 type Client struct {
 	executable      string
-	baseURL         string
+	defaultModel    string
 	configOverrides []string
 	environment     []string
 	apiKey          string
 }
 
-// NewClient creates a Client and resolves its Codex CLI executable.
+// NewClient validates its configuration, creates a Client, and resolves its
+// Codex CLI executable.
 func NewClient(options ClientOptions) (*Client, error) {
+	if options.APIKey != "" {
+		if err := validateConfigString("apiKey", options.APIKey); err != nil {
+			return nil, err
+		}
+	}
+	apiKey := options.APIKey
+	defaultModel := ""
+	var configOverrides []string
+	if options.Experimental != nil {
+		configOverrides = slices.Clone(options.Experimental.ConfigOverrides)
+	}
+	if err := validateExperimentalOverrides(configOverrides); err != nil {
+		return nil, err
+	}
+	if options.Provider != nil {
+		if options.APIKey != "" {
+			return nil, newValidationError(
+				"apiKey",
+				"must not be set with provider authentication",
+			)
+		}
+		provider, err := normalizeResponsesProvider(*options.Provider)
+		if err != nil {
+			return nil, err
+		}
+		apiKey = provider.apiKey
+		defaultModel = provider.model
+		configOverrides = append(provider.overrides, configOverrides...)
+	}
+
 	executable := options.CodexPath
 	if executable == "" {
 		executable = "codex"
@@ -54,24 +84,22 @@ func NewClient(options ClientOptions) (*Client, error) {
 	if err != nil {
 		return nil, &ExecutableError{Path: executable, Err: err}
 	}
-	structuredOverrides, err := serializeConfig(options.Config)
-	if err != nil {
-		return nil, err
-	}
-	configOverrides := append(structuredOverrides, slices.Clone(options.ConfigOverrides)...)
-
 	return &Client{
 		executable:      resolved,
-		baseURL:         options.BaseURL,
+		defaultModel:    defaultModel,
 		configOverrides: configOverrides,
-		environment:     snapshotEnvironment(options.Env, options.APIKey),
-		apiKey:          strings.Clone(options.APIKey),
+		environment:     snapshotEnvironment(options.Env, apiKey),
+		apiKey:          strings.Clone(apiKey),
 	}, nil
 }
 
-// StartThread creates a new Thread.
-func (c *Client) StartThread(options ThreadOptions) *Thread {
-	return &Thread{client: c, options: snapshotThreadOptions(options)}
+// StartThread validates its options and creates a new Thread.
+func (c *Client) StartThread(options ThreadOptions) (*Thread, error) {
+	options, err := c.normalizeThreadOptions(options)
+	if err != nil {
+		return nil, err
+	}
+	return &Thread{client: c, options: options}, nil
 }
 
 // ResumeThread reconstructs a persisted Thread from its identifier.
@@ -79,7 +107,69 @@ func (c *Client) ResumeThread(id string, options ThreadOptions) (*Thread, error)
 	if id == "" {
 		return nil, &ValidationError{Field: "id", Err: errors.New("must not be empty")}
 	}
-	return &Thread{client: c, options: snapshotThreadOptions(options), id: id}, nil
+	options, err := c.normalizeThreadOptions(options)
+	if err != nil {
+		return nil, err
+	}
+	return &Thread{client: c, options: options, id: id}, nil
+}
+
+func (c *Client) normalizeThreadOptions(options ThreadOptions) (ThreadOptions, error) {
+	if options.Model != "" {
+		if err := validateConfigString("model", options.Model); err != nil {
+			return ThreadOptions{}, err
+		}
+	} else {
+		options.Model = c.defaultModel
+	}
+	if options.ThreadSource != "" {
+		if err := validateConfigString("threadSource", options.ThreadSource); err != nil {
+			return ThreadOptions{}, err
+		}
+	}
+	if strings.ContainsRune(options.WorkingDirectory, 0) {
+		return ThreadOptions{}, newValidationError("workingDirectory", "must not contain NUL")
+	}
+	for index, directory := range options.AdditionalDirectories {
+		if strings.ContainsRune(directory, 0) {
+			return ThreadOptions{}, newValidationError(
+				fmt.Sprintf("additionalDirectories[%d]", index),
+				"must not contain NUL",
+			)
+		}
+	}
+	switch options.SandboxMode {
+	case "", SandboxReadOnly, SandboxWorkspaceWrite, SandboxDangerFullAccess:
+	default:
+		return ThreadOptions{}, invalidThreadOption("sandboxMode", string(options.SandboxMode))
+	}
+	switch options.ModelReasoningEffort {
+	case "", ReasoningEffortMinimal, ReasoningEffortLow, ReasoningEffortMedium,
+		ReasoningEffortHigh, ReasoningEffortXHigh, ReasoningEffortMax,
+		ReasoningEffortUltra, ReasoningEffortPersistent:
+	default:
+		return ThreadOptions{}, invalidThreadOption("modelReasoningEffort", string(options.ModelReasoningEffort))
+	}
+	switch options.NetworkAccess {
+	case "", NetworkAccessEnabled, NetworkAccessDisabled:
+	default:
+		return ThreadOptions{}, invalidThreadOption("networkAccess", string(options.NetworkAccess))
+	}
+	switch options.WebSearchMode {
+	case "", WebSearchDisabled, WebSearchCached, WebSearchLive:
+	default:
+		return ThreadOptions{}, invalidThreadOption("webSearchMode", string(options.WebSearchMode))
+	}
+	switch options.ApprovalPolicy {
+	case "", ApprovalNever, ApprovalOnRequest, ApprovalOnFailure, ApprovalUntrusted:
+	default:
+		return ThreadOptions{}, invalidThreadOption("approvalPolicy", string(options.ApprovalPolicy))
+	}
+	return snapshotThreadOptions(options), nil
+}
+
+func invalidThreadOption(field string, value string) error {
+	return newValidationError(field, fmt.Sprintf("unsupported value %q", value))
 }
 
 func snapshotEnvironment(environment map[string]string, apiKey string) []string {

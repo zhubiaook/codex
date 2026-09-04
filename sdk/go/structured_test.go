@@ -84,7 +84,7 @@ func TestThreadAcceptsNamedStringAndRawStructuredOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
-	turn, err := client.StartThread(codex.ThreadOptions{}).Run(
+	turn, err := startThread(t, client, codex.ThreadOptions{}).Run(
 		t.Context(),
 		namedPrompt("structured"),
 		codex.TurnOptions{OutputSchema: schema},
@@ -106,7 +106,7 @@ func TestThreadRejectsInvalidOutputSchema(t *testing.T) {
 		if schema == nil {
 			continue
 		}
-		_, err := client.StartThread(codex.ThreadOptions{}).Run(
+		_, err := startThread(t, client, codex.ThreadOptions{}).Run(
 			t.Context(),
 			"invalid schema",
 			codex.TurnOptions{OutputSchema: schema},
@@ -116,7 +116,7 @@ func TestThreadRejectsInvalidOutputSchema(t *testing.T) {
 			t.Errorf("Run() error = %T %v, want output schema ValidationError", err, err)
 		}
 	}
-	_, err = client.StartThread(codex.ThreadOptions{}).RunJSON[structuredAnswer](
+	_, err = startThread(t, client, codex.ThreadOptions{}).RunJSON[structuredAnswer](
 		t.Context(), "invalid schema", nil, codex.TurnOptions{},
 	)
 	validationError, ok := errors.AsType[*codex.ValidationError](err)
@@ -132,7 +132,7 @@ func TestRunJSONReportsTargetTypeMismatch(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewClient() error = %v", err)
 		}
-		_, err = client.StartThread(codex.ThreadOptions{}).RunJSON[structuredAnswer](
+		_, err = startThread(t, client, codex.ThreadOptions{}).RunJSON[structuredAnswer](
 			t.Context(), "structured", schema, codex.TurnOptions{},
 		)
 		decodeError, ok := errors.AsType[*codex.OutputDecodeError](err)
@@ -165,7 +165,7 @@ func TestOutputSchemaIsRemovedOnFailureCancellationAndEarlyBreak(t *testing.T) {
 			}
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			for event, err := range client.StartThread(codex.ThreadOptions{}).RunStreamed(
+			for event, err := range startThread(t, client, codex.ThreadOptions{}).RunStreamed(
 				ctx, "structured", codex.TurnOptions{OutputSchema: schema},
 			) {
 				if scenario == "structured-cancel" {
