@@ -81,6 +81,10 @@ func main() {
 		runStructured(os.Getenv("CODEX_FAKE_SCENARIO"))
 	case "activity":
 		emitActivity()
+	case "command-declined":
+		emitTurnWithItem(`{"id":"command-declined","type":"command_execution","command":"git status","aggregated_output":"","status":"declined"}`)
+	case "file-change-in-progress":
+		emitTurnWithItem(`{"id":"file-change-in-progress","type":"file_change","changes":[{"path":"main.go","kind":"update"}],"status":"in_progress"}`)
 	case "malformed-known":
 		fmt.Println(`{"type":"item.completed","item":{"id":"command-1","type":"command_execution","command":"go test","aggregated_output":"","status":"invented"}}`)
 	case "malformed-completion":
@@ -123,6 +127,13 @@ func emitActivity() {
 	fmt.Println(`{"type":"future.event","answer":42}`)
 	fmt.Println(`{"type":"item.completed","item":{"id":"future-1","type":"future_item","payload":{"ok":true}}}`)
 	fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":4,"cached_input_tokens":2,"output_tokens":3,"reasoning_output_tokens":1}}`)
+}
+
+func emitTurnWithItem(item string) {
+	fmt.Println(`{"type":"thread.started","thread_id":"thread-item"}`)
+	fmt.Println(`{"type":"turn.started"}`)
+	fmt.Printf("{\"type\":\"item.completed\",\"item\":%s}\n", item)
+	fmt.Println(`{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1,"reasoning_output_tokens":0}}`)
 }
 
 func emitIntegrationItems() {

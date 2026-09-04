@@ -60,6 +60,8 @@ const (
 	CommandCompleted CommandExecutionStatus = "completed"
 	// CommandFailed indicates that a command failed.
 	CommandFailed CommandExecutionStatus = "failed"
+	// CommandDeclined indicates that a command was not approved to run.
+	CommandDeclined CommandExecutionStatus = "declined"
 )
 
 // CommandExecutionItem describes a command executed by the agent.
@@ -93,10 +95,12 @@ type FileUpdateChange struct {
 	Kind PatchChangeKind `json:"kind"`
 }
 
-// PatchApplyStatus is the terminal state of a file change.
+// PatchApplyStatus is the lifecycle state of a file change.
 type PatchApplyStatus string
 
 const (
+	// PatchApplyInProgress indicates that the patch is being applied.
+	PatchApplyInProgress PatchApplyStatus = "in_progress"
 	// PatchApplyCompleted indicates that the patch was applied.
 	PatchApplyCompleted PatchApplyStatus = "completed"
 	// PatchApplyFailed indicates that the patch failed.

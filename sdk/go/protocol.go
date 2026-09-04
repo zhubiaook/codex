@@ -137,7 +137,7 @@ func decodeThreadItem(data []byte) (ThreadItem, error) {
 		if _, err := requiredJSONMembers(data, "command", "aggregated_output", "status"); err != nil {
 			return nil, err
 		}
-		if !slices.Contains([]CommandExecutionStatus{CommandInProgress, CommandCompleted, CommandFailed}, item.Status) {
+		if !slices.Contains([]CommandExecutionStatus{CommandInProgress, CommandCompleted, CommandFailed, CommandDeclined}, item.Status) {
 			return nil, protocolPayloadError(fmt.Sprintf("command_execution has invalid status %q", item.Status))
 		}
 		return &item, nil
@@ -150,7 +150,7 @@ func decodeThreadItem(data []byte) (ThreadItem, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !slices.Contains([]PatchApplyStatus{PatchApplyCompleted, PatchApplyFailed}, item.Status) {
+		if !slices.Contains([]PatchApplyStatus{PatchApplyInProgress, PatchApplyCompleted, PatchApplyFailed}, item.Status) {
 			return nil, protocolPayloadError(fmt.Sprintf("file_change has invalid status %q", item.Status))
 		}
 		var rawChanges []jsontext.Value

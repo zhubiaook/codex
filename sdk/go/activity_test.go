@@ -79,6 +79,40 @@ func TestThreadDecodesAgentActivityAndUnknownVariants(t *testing.T) {
 	}
 }
 
+func TestThreadDecodesDeclinedCommand(t *testing.T) {
+	turn, err := newActivityClient(t, "command-declined").StartThread(codex.ThreadOptions{}).Run(
+		t.Context(), "activity", codex.TurnOptions{},
+	)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := []codex.ThreadItem{&codex.CommandExecutionItem{
+		ID: "command-declined", Command: "git status", AggregatedOutput: "", Status: codex.CommandDeclined,
+	}}
+	if !reflect.DeepEqual(turn.Items, want) {
+		t.Errorf("Turn.Items = %#v, want %#v", turn.Items, want)
+	}
+}
+
+func TestThreadDecodesFileChangeInProgress(t *testing.T) {
+	turn, err := newActivityClient(t, "file-change-in-progress").StartThread(codex.ThreadOptions{}).Run(
+		t.Context(), "activity", codex.TurnOptions{},
+	)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := []codex.ThreadItem{&codex.FileChangeItem{
+		ID: "file-change-in-progress",
+		Changes: []codex.FileUpdateChange{
+			{Path: "main.go", Kind: codex.PatchChangeUpdate},
+		},
+		Status: codex.PatchApplyInProgress,
+	}}
+	if !reflect.DeepEqual(turn.Items, want) {
+		t.Errorf("Turn.Items = %#v, want %#v", turn.Items, want)
+	}
+}
+
 func TestKnownMalformedActivityIsNotDowngradedToUnknown(t *testing.T) {
 	client := newActivityClient(t, "malformed-known")
 	_, err := client.StartThread(codex.ThreadOptions{}).Run(t.Context(), "activity", codex.TurnOptions{})
